@@ -471,6 +471,44 @@
     border-color: var(--primary);
     box-shadow: 0 0 0 2px rgba(45, 82, 120, 0.30);
   }
+
+  /* Zoom slider row: −/+ buttons flank a native range input with a live %
+     readout on the right. The range uses the same muted slate accent as the
+     primary action button so it visually belongs with the rest of the popup. */
+  .zoom-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .zoom-row input[type="range"] {
+    flex: 1;
+    padding: 0;
+    background: transparent;
+    border: none;
+    accent-color: var(--primary);
+    height: 18px;
+  }
+  .zoom-step {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    font: 600 13px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    color: var(--base-content);
+    background: var(--base-200);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .zoom-step:hover { background: var(--base-300, var(--base-200)); }
+  .zoom-step:disabled { opacity: 0.4; cursor: default; }
+  .zoom-value {
+    min-width: 38px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--base-muted);
+  }
   /* Transient highlight applied when the user clicks an action that needs a
      field they haven't filled in yet — guides their eye to the right spot. */
   .settings-grid input.attention,
@@ -727,6 +765,24 @@
   <div class="settings-row">
     <details id="settings">
       <summary>Settings</summary>
+
+    <details class="settings-section">
+      <summary><h4 class="settings-heading">Display</h4></summary>
+      <div class="settings-grid">
+        <label>
+          <span>UI zoom</span>
+          <div class="zoom-row">
+            <button type="button" id="zoom-minus" class="zoom-step" aria-label="Decrease zoom">&minus;</button>
+            <input type="range" id="set-ui-zoom" min="90" max="140" step="5" value="100">
+            <button type="button" id="zoom-plus" class="zoom-step" aria-label="Increase zoom">+</button>
+            <span id="zoom-value" class="zoom-value">100%</span>
+          </div>
+        </label>
+      </div>
+      <div class="settings-hint">
+        For high-DPI screens where the popup reads small. Applies live and persists locally.
+      </div>
+    </details>
 
     <details class="settings-section" open>
       <summary><h4 class="settings-heading">AI provider</h4></summary>

@@ -72,6 +72,17 @@ const SETTING_FIELDS = [
   ['set-notion-page',  'notionPage'],
 ];
 
+// Apply persisted UI zoom as early as possible so the popup doesn't flash at
+// 100% before snapping to the user's preferred size. CSS `zoom` scales layout
+// and type together — fixed-px paddings/icons come along, unlike font-size.
+function applyUiZoom(pct) {
+  const n = Number(pct);
+  document.documentElement.style.zoom = Number.isFinite(n) && n > 0 ? n / 100 : '';
+}
+chrome.storage.local.get('uiZoom').then(({ uiZoom }) => {
+  if (uiZoom) applyUiZoom(uiZoom);
+});
+
 // Populate the settings panel from chrome.storage and persist on input change.
 async function initSettings() {
   const keys = SETTING_FIELDS.map(([, k]) => k).concat(['extraPrompt', 'deepseekKey']);
@@ -147,6 +158,41 @@ async function initSettings() {
 }
 initSettings();
 
+// UI zoom slider — −/+ buttons, range input, live % readout. Persists on
+// release ('change'); applies zoom + updates readout on every input event so
+// the popup grows under the user's fingers. Buttons clamp at min/max.
+async function initZoom() {
+  const slider = document.getElementById('set-ui-zoom');
+  const minus  = document.getElementById('zoom-minus');
+  const plus   = document.getElementById('zoom-plus');
+  const readout = document.getElementById('zoom-value');
+  if (!slider) return;
+  const { uiZoom } = await chrome.storage.local.get('uiZoom');
+  const initial = Number(uiZoom) || 100;
+  slider.value = String(initial);
+  const min = Number(slider.min), max = Number(slider.max), step = Number(slider.step);
+  const refresh = () => {
+    const v = Number(slider.value);
+    readout.textContent = v + '%';
+    minus.disabled = v <= min;
+    plus.disabled  = v >= max;
+    applyUiZoom(v);
+  };
+  refresh();
+  slider.addEventListener('input', refresh);
+  slider.addEventListener('change', () => chrome.storage.local.set({ uiZoom: Number(slider.value) }));
+  const nudge = (delta) => {
+    const v = Math.max(min, Math.min(max, Number(slider.value) + delta));
+    if (v === Number(slider.value)) return;
+    slider.value = String(v);
+    refresh();
+    chrome.storage.local.set({ uiZoom: v });
+  };
+  minus.addEventListener('click', () => nudge(-step));
+  plus .addEventListener('click', () => nudge( step));
+}
+initZoom();
+
 // Footer shortcut defaults to mac glyphs in HTML; rewrite for other platforms
 // so Windows/Linux users see a correct hint.
 const platform = navigator.userAgentData?.platform || navigator.platform || '';
@@ -197,10 +243,10 @@ async function init() {
     // Revealing it here keeps it consistent with the spacebar shortcut.
     playPauseBtn.hidden = false;
 
-    const [{ result }] = await chrome.scripting.executeScript({
+    let [{ result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      // MAIN world so the scroll-method monkey-patches inside scrapePage
-      // actually intercept YouTube's own click handlers (which run there).
+      // MAIN world so scrapePage can call the player's getPlayerResponse()
+      // API and read window.ytInitialPlayerResponse — both page-context only.
       world: 'MAIN',
       func: scrapePage,
     });
@@ -303,14 +349,13 @@ function handleScrapeError(result) {
   const code = result?.error || 'unknown';
   const messages = {
     'no-button': "This video doesn't have captions available.",
-    'panel-empty': 'Captions failed to load — YouTube returned an empty or invalid response. Try refreshing the YouTube tab and reopening the popup.',
+    'panel-empty': "Couldn't load this video's transcript.",
   };
   let msg = messages[code] || result?.error || 'No transcript available.';
 
-  // When diagnostics are attached, stage them and reveal the copy button —
-  // never write to the clipboard without an explicit user click.
+  // Stage diagnostics and reveal the copy button (only writes to clipboard on
+  // an explicit click).
   if (result?.debug) {
-    msg += ' Use the button below to copy a diagnostic and paste it to me.';
     pendingDebug = JSON.stringify(result.debug, null, 2);
     debugRow.hidden = false;
   }
@@ -1415,123 +1460,182 @@ function renderBalance(amount, currency) {
   balanceEl.className = cls;
 }
 
-// --------------------------------------------------------------------------
-// Injected page scraper. Runs in MAIN world via chrome.scripting.executeScript.
-// Toggles the transcript engagement panel's `visibility` attribute to
-// EXPANDED (no DOM clicks, no description-expand) and reads the segment
-// elements directly. Hides the panel again on the way out.
-//
-// Returns { segments: [{timestamp,text}], info: {...} } on success, or
-// { error: code, debug? } on failure. Codes:
-//   'no-button'   — no transcript panel exists in DOM (video has no captions).
-//   'panel-empty' — panel exists but produced no segment elements after toggle.
-// --------------------------------------------------------------------------
+// Runs in the page (MAIN world) via chrome.scripting.executeScript. Fetches the
+// caption track from the player response. YouTube gates the caption endpoint
+// behind a proof-of-origin token, so it briefly toggles the CC button to make
+// the player fetch captions and reads that token out of the Performance API,
+// then fetches the track (json3, then xml). Falls back to reading a transcript
+// already rendered on the page. No panel, no description expand, no scroll.
+// Returns { segments, info } or { error, debug }. Errors: no-button (no
+// captions), panel-empty (couldn't get the caption data).
 async function scrapePage() {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const debug = {};
 
-  // SPA wait — make sure the watch element matches the URL before we read DOM.
+  const getResponse = () => {
+    let r;
+    try { r = document.getElementById('movie_player')?.getPlayerResponse?.(); } catch (e) {}
+    return r || window.ytInitialPlayerResponse;
+  };
+
+  // SPA wait — until the player's videoId matches the URL's ?v= so a just-
+  // navigated tab never hands back the previous video's captions.
   const urlVid = new URL(location.href).searchParams.get('v');
   if (urlVid) {
     const started = Date.now();
-    while (Date.now() - started < 3000) {
-      const domVid = document.querySelector('ytd-watch-flexy')?.getAttribute('video-id');
-      if (domVid === urlVid) break;
+    while (Date.now() - started < 5000) {
+      if (getResponse()?.videoDetails?.videoId === urlVid) break;
       await sleep(100);
     }
   }
 
-  const PANEL_SEL = 'ytd-engagement-panel-section-list-renderer';
-  const SEG_SEL = 'transcript-segment-view-model, ytd-transcript-segment-renderer';
+  const response = getResponse();
 
-  // Snapshot panel visibilities so we hide back any panel we caused to expand.
-  const initialPanelState = new Map();
-  for (const p of document.querySelectorAll(PANEL_SEL)) {
-    initialPanelState.set(p, p.getAttribute('visibility') || 'unset');
-  }
+  const pad = n => String(n).padStart(2, '0');
+  const secsToStamp = secs => {
+    const h = Math.floor(secs / 3600), mn = Math.floor((secs % 3600) / 60), sc = secs % 60;
+    return h > 0 ? `${h}:${pad(mn)}:${pad(sc)}` : `${mn}:${pad(sc)}`;
+  };
+  const clean = s => (s || '').replace(/\s+/g, ' ').trim();
 
-  // Best-effort scroll lock. Doesn't help for every theatre-mode quirk but
-  // prevents anything that goes through the standard scroll APIs.
-  const initialScrollX = window.scrollX;
-  const initialScrollY = window.scrollY;
-  const htmlEl = document.documentElement;
-  const _origHtmlOverflow = htmlEl.style.overflow;
-  htmlEl.style.overflow = 'hidden';
+  // Pick a caption track: manual + English, then manual any-lang, then English
+  // ASR, then first available.
+  const tracks = response?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+  debug.trackCount = tracks.length;
+  if (!tracks.length) return { error: 'no-button', debug };
 
-  const cleanup = () => {
+  const isEnglish = t => (t.languageCode || '').toLowerCase().startsWith('en');
+  const isManual  = t => t.kind !== 'asr';
+  const track = tracks.find(t => isManual(t) && isEnglish(t)) ||
+    tracks.find(isManual) || tracks.find(isEnglish) || tracks[0];
+
+  const parseJson3 = (txt) => (JSON.parse(txt).events || []).map(ev => ({
+    timestamp: secsToStamp(Math.floor((ev.tStartMs || 0) / 1000)),
+    text: clean((ev.segs || []).map(s => s.utf8 || '').join('')),
+  })).filter(s => s.text);
+  const parseXml = (txt) => {
+    const doc = new DOMParser().parseFromString(txt, 'text/xml');
+    return [...doc.querySelectorAll('text')].map(n => ({
+      timestamp: secsToStamp(Math.floor(parseFloat(n.getAttribute('start') || '0'))),
+      text: clean(n.textContent),
+    })).filter(s => s.text);
+  };
+
+  // YouTube gates the caption endpoints behind a proof-of-origin (POT) token.
+  // Read the one the player itself uses: toggle the CC (subtitles) button so the
+  // player fetches captions, then pull the pot out of the timedtext request the
+  // browser recorded in the Performance API. Restore the CC state afterwards.
+  const readPot = async (ms) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      try {
+        const e = performance.getEntriesByType('resource')
+          .filter(x => x.name.includes('/api/timedtext?')).pop();
+        if (e) { const p = new URL(e.name).searchParams.get('pot'); if (p) return p; }
+      } catch (x) {}
+      await sleep(50);
+    }
+    return '';
+  };
+  const CC_SELS = ['button.ytp-subtitles-button.ytp-button', '.ytp-subtitles-button',
+    "button[aria-label*='Captions']", "button[aria-label*='captions']",
+    "button[aria-label*='Subtitles']", "button[aria-label*='subtitles']"];
+  const ccOn = (b) => !!b && (b.getAttribute('aria-pressed') === 'true' ||
+    b.classList.contains('ytp-button-active') ||
+    /captions off|subtitles off/i.test(b.getAttribute('aria-label') || ''));
+  let pot = await readPot(400);  // maybe the player already fetched captions
+  if (!pot) {
     try {
-      for (const p of document.querySelectorAll(PANEL_SEL)) {
-        const orig = initialPanelState.get(p) || 'unset';
-        const now = p.getAttribute('visibility') || 'unset';
-        if (now === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED' &&
-            orig !== 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
-          p.setAttribute('visibility', 'ENGAGEMENT_PANEL_VISIBILITY_HIDDEN');
-        }
-      }
-      if (window.scrollX !== initialScrollX || window.scrollY !== initialScrollY) {
-        window.scrollTo(initialScrollX, initialScrollY);
+      const cc = CC_SELS.map(s => document.querySelector(s)).find(Boolean);
+      debug.ccBtn = !!cc;
+      if (cc) {
+        performance.clearResourceTimings();
+        const wasOn = ccOn(cc);
+        if (wasOn) { cc.click(); await sleep(120); cc.click(); } else { cc.click(); }
+        pot = await readPot(2500);
+        if (!wasOn) { try { if (ccOn(cc)) cc.click(); } catch (e) {} }  // turn back off
       }
     } catch (e) {}
-    htmlEl.style.overflow = _origHtmlOverflow;
-  };
+  }
+  debug.havePot = !!pot;
+  const potQ = pot ? `&pot=${encodeURIComponent(pot)}&c=WEB` : '';
 
-  const transcriptPanels = [...document.querySelectorAll(PANEL_SEL)]
-    .filter(p => (p.getAttribute('target-id') || '').toLowerCase().includes('transcript'));
-
-  if (!transcriptPanels.length) {
-    cleanup();
-    return { error: 'no-button' };
+  // Fetch the caption track: json3, then raw XML.
+  const sep = track.baseUrl.includes('?') ? '&' : '?';
+  const attempts = [
+    { fmt: 'json3', url: `${track.baseUrl}${sep}fmt=json3${potQ}`, parse: parseJson3 },
+    { fmt: 'xml',   url: `${track.baseUrl}${potQ}`,                parse: parseXml },
+  ];
+  debug.fetches = [];
+  let raw = null;
+  for (const a of attempts) {
+    try {
+      const r = await fetch(a.url, { credentials: 'include' });
+      const t = await r.text();
+      debug.fetches.push({ fmt: a.fmt, status: r.status, len: t.length });
+      if (r.ok && t) { const segs = a.parse(t); if (segs.length) { raw = segs; break; } }
+    } catch (e) { debug.fetches.push({ fmt: a.fmt, err: String((e && e.message) || e) }); }
   }
 
-  // Expand any transcript panel we found by setting its visibility attribute.
-  // YouTube's polymer reactivity populates segment elements lazily.
-  for (const p of transcriptPanels) {
-    p.setAttribute('visibility', 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED');
-  }
-
-  // Wait for segments. Up to 8 s — modern videos populate within 1 s, but
-  // ASR-only or large transcripts can take longer.
-  const findSegmentNodes = () => {
-    for (const p of transcriptPanels) {
-      const nodes = p.querySelectorAll(SEG_SEL);
-      if (nodes.length) return nodes;
-    }
-    return document.querySelectorAll(SEG_SEL);
-  };
-  let segNodes = findSegmentNodes();
-  const start = Date.now();
-  while (segNodes.length === 0 && Date.now() - start < 8000) {
-    await sleep(100);
-    segNodes = findSegmentNodes();
-  }
-
-  if (segNodes.length === 0) {
-    cleanup();
-    return {
-      error: 'panel-empty',
-      debug: {
-        panelCount: transcriptPanels.length,
-        modernSegs: document.querySelectorAll('transcript-segment-view-model').length,
-        legacySegs: document.querySelectorAll('ytd-transcript-segment-renderer').length,
-      },
+  // Fallback: the silent fetch was empty (YouTube gates it). Open the transcript
+  // the way a person does and read it: expand the description, click "Show
+  // transcript", wait for the lines to render. The page never moves: no
+  // scrollIntoView, and the scroll position is pinned back on every poll.
+  if (!raw || !raw.length) {
+    debug.domSegNodes = 0;
+    const stampRe = /^(\d{1,2}:\d{2}(?::\d{2})?)[\s ]+([\s\S]+)$/;
+    const readNode = (seg) => {
+      let ts = clean(seg.querySelector(
+        '.ytwTranscriptSegmentViewModelTimestamp, .segment-timestamp, [class*="imestamp"]')?.textContent || '');
+      let tx = clean(seg.querySelector(
+        'span[role="text"], .segment-text, yt-formatted-string.segment-text, [class*="nippet"]')?.textContent || '');
+      if (!tx) {
+        const whole = clean(seg.textContent);
+        const mm = whole.match(stampRe);
+        if (mm) { ts = ts || mm[1]; tx = mm[2]; } else { tx = whole; }
+      }
+      return { timestamp: ts, text: tx };
     };
+    // Known segment elements first (cheap + clean), broadest last.
+    const SEG_SELS = ['ytd-transcript-segment-renderer', 'transcript-segment-view-model', '[class*="ranscriptSegment"]'];
+    const readDom = () => {
+      for (const sel of SEG_SELS) {
+        const n = document.querySelectorAll(sel);
+        if (n.length) {
+          const segs = [...n].map(readNode).filter(s => s.text);
+          if (segs.length) { debug.usedSel = sel; debug.domSegNodes = n.length; return segs; }
+        }
+      }
+      return null;
+    };
+
+    let domSegs = readDom();  // reads the transcript if it is rendered on the page
+
+    // Tag-agnostic catch-all + triage: parse the transcript container's
+    // innerText (timestamp + line), and record what's actually inside it so any
+    // remaining miss is diagnosable.
+    if (!domSegs) {
+      const container = document.querySelector(
+        'ytd-transcript-segment-list-renderer, ytd-transcript-renderer, ytd-transcript-search-panel-renderer')
+        || [...document.querySelectorAll('[target-id]')].find(p => /transcript/i.test(p.getAttribute('target-id') || ''));
+      debug.hasContainer = !!container;
+      if (container) {
+        debug.childTags = [...new Set([...container.querySelectorAll('*')].map(e => e.tagName.toLowerCase()))].slice(0, 25);
+        const txt = container.innerText || '';
+        debug.containerTextLen = txt.length;
+        const out = [];
+        const re = /(\d{1,2}:\d{2}(?::\d{2})?)[\s \n]+([^\n]+)/g;
+        let mm; while ((mm = re.exec(txt))) { const t = clean(mm[2]); if (t) out.push({ timestamp: mm[1], text: t }); }
+        if (out.length) domSegs = out;
+      }
+    }
+
+    if (domSegs && domSegs.length) raw = domSegs;
   }
 
-  // Read each segment. Modern uses <transcript-segment-view-model>, legacy
-  // uses <ytd-transcript-segment-renderer> — different inner selectors.
-  const readSeg = (seg) => {
-    if (seg.tagName === 'TRANSCRIPT-SEGMENT-VIEW-MODEL') {
-      const stamp = seg.querySelector('.ytwTranscriptSegmentViewModelTimestamp')?.textContent?.trim() || '';
-      const cap = seg.querySelector('span[role="text"]');
-      return { timestamp: stamp, text: (cap?.textContent || '').trim() };
-    }
-    return {
-      timestamp: seg.querySelector('.segment-timestamp')?.textContent?.trim() || '',
-      text: seg.querySelector('.segment-text, yt-formatted-string.segment-text')?.textContent?.trim() || '',
-    };
-  };
+  if (!raw || !raw.length) return { error: 'panel-empty', debug };
 
-  const raw = [...segNodes].map(readSeg).filter(s => s.text);
-  // Dedupe adjacent exact repeats only.
+  // Dedupe adjacent exact repeats (ASR rolling captions repeat lines).
   const segments = [];
   for (const cur of raw) {
     const prev = segments[segments.length - 1];
@@ -1539,29 +1643,16 @@ async function scrapePage() {
     segments.push(cur);
   }
 
-  // Metadata. Prefer player response (most reliable), fall back to DOM.
-  const player = document.getElementById('movie_player');
-  let response;
-  try { response = player?.getPlayerResponse?.(); } catch (e) {}
-  response = response || window.ytInitialPlayerResponse;
-
+  // Metadata from the player response.
   const v = response?.videoDetails || {};
   const m = response?.microformat?.playerMicroformatRenderer || {};
   const lengthSec = parseInt(v.lengthSeconds, 10);
-  const pad = n => String(n).padStart(2, '0');
-  const secsToStamp = secs => {
-    const h = Math.floor(secs / 3600);
-    const mn = Math.floor((secs % 3600) / 60);
-    const sc = secs % 60;
-    return h > 0 ? `${h}:${pad(mn)}:${pad(sc)}` : `${mn}:${pad(sc)}`;
-  };
   const info = {
-    title: (v.title || document.title.replace(/ - YouTube$/, '')).trim(),
-    channel: (v.author || '').trim(),
+    title: clean(v.title || document.title.replace(/ - YouTube$/, '')),
+    channel: clean(v.author || ''),
     duration: Number.isFinite(lengthSec) ? secsToStamp(lengthSec) : '',
     published: (m.publishDate || '').slice(0, 10),
   };
 
-  cleanup();
   return { segments, info };
 }
