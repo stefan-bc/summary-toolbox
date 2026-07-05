@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Summary Toolbox",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "Grab YouTube transcripts — search, copy, download as TXT/SRT. Or summarise any web page with your own AI key.",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
