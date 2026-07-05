@@ -707,7 +707,7 @@ const SUMMARY_INPUT_CAP = 80000;
 const SUMMARY_SYSTEM_PROMPT =
   'You summarise YouTube video transcripts.\n\n' +
   'Output 5–7 concise bullet points covering the main topics, each prefixed with "- ".\n' +
-  'Where a bullet refers to a specific moment in the video, end the bullet with the timestamp in square brackets, e.g. "[2:45]" or "[1:12:30]". A range is fine if the bullet covers a span: "[1:52–3:23]". Use timestamps that appear in the supplied transcript only — never invent or guess.\n' +
+  'Where a bullet refers to a specific moment in the video, end the bullet with the timestamp in square brackets, e.g. "[2:45]" or "[1:12:30]". A range is fine if the bullet covers a span: "[1:52–3:23]". If a bullet cites several separate moments, put them all inside one pair of brackets separated by commas, e.g. "[4:49–5:11, 13:00–13:19]" — never use more than one pair of brackets in a single bullet. Use timestamps that appear in the supplied transcript only — never invent or guess.\n' +
   'No preamble, no closing remarks, no headings, no extra blank lines.';
 
 // Page-mode counterpart. Same shape (5–7 bullets) so the renderer + save
@@ -1043,14 +1043,16 @@ function parseSummaryResponse(text) {
   return { prefix, bullets };
 }
 
-// Matches a timestamp (or timestamp range) wrapped in square brackets.
-// Single: [2:45], [1:12:30]. Range: [1:52–3:23], [1:52-3:23], [1:52 — 3:23]
-// (any of hyphen, en-dash, em-dash, optional whitespace). Capture groups:
-//   m[1] = inner text to display on the chip (e.g. "1:52–3:23")
-//   m[2] = start timestamp the chip seeks to (e.g. "1:52")
-// Kept brackets-only so we don't accidentally chip-ify "[Music]" or random
-// bracketed prose the model emits.
-const SUMMARY_STAMP_RE = /\[((\d{1,2}:\d{2}(?::\d{2})?)(?:\s*[–—-]\s*\d{1,2}:\d{2}(?::\d{2})?)?)\]/g;
+// Matches one or more comma-separated timestamps (or timestamp ranges)
+// wrapped in a single pair of square brackets, e.g. "[2:45]", "[1:12:30]",
+// "[1:52–3:23]" (hyphen/en-dash/em-dash, optional whitespace), or
+// "[4:49–5:11, 13:00–13:19]" — some models (DeepSeek observed) cite several
+// moments per bullet inside one bracket instead of one bracket each; m[1]
+// captures the whole comma-joined body so appendBulletWithStamps can split it
+// into one chip per timestamp. Kept brackets-only so we don't accidentally
+// chip-ify "[Music]" or random bracketed prose the model emits.
+const STAMP_ITEM_SRC = '\\d{1,2}:\\d{2}(?::\\d{2})?(?:\\s*[–—-]\\s*\\d{1,2}:\\d{2}(?::\\d{2})?)?';
+const SUMMARY_STAMP_RE = new RegExp(`\\[(${STAMP_ITEM_SRC}(?:\\s*,\\s*${STAMP_ITEM_SRC})*)\\]`, 'g');
 
 function renderSummary(text, { meta } = {}) {
   const { prefix, bullets } = parseSummaryResponse(text);
@@ -1112,21 +1114,27 @@ function appendBulletWithStamps(li, text) {
     if (m.index > lastIdx) {
       li.appendChild(document.createTextNode(text.slice(lastIdx, m.index)));
     }
-    const display = m[1];     // "1:52" or "1:52–3:23" — what the chip shows
-    const startStamp = m[2];  // "1:52" — what we seek to
-    const sec = parseStamp(startStamp);
-    const validRange = sec >= 0 && (durSec === 0 || sec <= durSec);
-    if (canChip && validRange) {
-      const btn = document.createElement('button');
-      btn.className = 't';
-      btn.type = 'button';
-      btn.textContent = display;
-      btn.dataset.sec = String(sec);
-      btn.title = 'Jump to this point in the video';
-      li.appendChild(btn);
-    } else {
-      li.appendChild(document.createTextNode(m[0]));
-    }
+    // m[1] is the whole bracket body, e.g. "1:52–3:23" or the multi-stamp
+    // "4:49–5:11, 13:00–13:19" — split on comma so each cited moment gets
+    // its own chip instead of the bracket falling back to plain text.
+    const items = m[1].split(',').map(s => s.trim());
+    items.forEach((display, i) => {
+      if (i > 0) li.appendChild(document.createTextNode(', '));
+      const startStamp = display.match(/^\d{1,2}:\d{2}(?::\d{2})?/)[0];
+      const sec = parseStamp(startStamp);
+      const validRange = sec >= 0 && (durSec === 0 || sec <= durSec);
+      if (canChip && validRange) {
+        const btn = document.createElement('button');
+        btn.className = 't';
+        btn.type = 'button';
+        btn.textContent = display;
+        btn.dataset.sec = String(sec);
+        btn.title = 'Jump to this point in the video';
+        li.appendChild(btn);
+      } else {
+        li.appendChild(document.createTextNode(display));
+      }
+    });
     lastIdx = m.index + m[0].length;
   }
   if (lastIdx < text.length) {
