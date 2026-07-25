@@ -89,9 +89,9 @@ If you don't configure any AI features, the extension makes zero network request
 
 - Requires videos to have captions (manual or auto-generated).
 - Does not support Shorts, live streams, or YouTube Music.
-- Extraction reads captions from YouTube's player response directly — no panel toggling, no DOM scraping, no scroll movement (even in theatre mode).
+- Extraction fetches captions directly from YouTube's caption endpoint, briefly toggling the CC (subtitles) button to obtain the required token — no transcript-panel interaction, no scroll movement (even in theatre mode). If that fetch comes back empty, it falls back to reading a transcript already rendered on the page (only works if the panel happens to be open).
 - YouTube occasionally renames DOM classes; if extraction breaks, inspect the transcript panel and update the selectors in `popup.js`.
-- The "Show transcript" button is matched by English aria-label/text. Localised YouTube UIs (non-English) may report "no captions" even when captions are present — international support is a known gap.
+- The CC button is matched by English aria-label text. Localised YouTube UIs (non-English) may report "no captions" even when captions are present — international support is a known gap.
 
 ## Update
 

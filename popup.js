@@ -695,13 +695,13 @@ function toSrt(items, durationStamp) {
 }
 
 // --------------------------------------------------------------------------
-// Summary feature — DeepSeek BYOK + save to Obsidian / Notion.
+// Summary feature — BYOK LLM + save to Obsidian / Notion.
 // All keys live in chrome.storage.local; nothing leaves the device except
-// the explicit POST to api.deepseek.com / PATCH to api.notion.com.
+// the explicit POST to the configured provider / PATCH to api.notion.com.
 // --------------------------------------------------------------------------
 
-// Cap transcript at ~80k chars (~20k tokens) — plenty of headroom under
-// DeepSeek-chat's 64k context and keeps cost predictable.
+// Cap transcript at ~80k chars (~20k tokens) — comfortably under every
+// supported provider's context window and keeps cost predictable.
 const SUMMARY_INPUT_CAP = 80000;
 
 const SUMMARY_SYSTEM_PROMPT =
