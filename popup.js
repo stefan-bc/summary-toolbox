@@ -48,7 +48,7 @@ let lastSummary = '';
 // LLM provider catalogue. Three API families share three adapter functions
 // in callLLM; each provider just maps to a baseUrl + default model.
 const PROVIDERS = {
-  deepseek:   { label: 'DeepSeek',         baseUrl: 'https://api.deepseek.com',                          defaultModel: 'deepseek-chat',                family: 'openai' },
+  deepseek:   { label: 'DeepSeek',         baseUrl: 'https://api.deepseek.com',                          defaultModel: 'deepseek-v4-flash',            family: 'openai' },
   openai:     { label: 'OpenAI',           baseUrl: 'https://api.openai.com/v1',                         defaultModel: 'gpt-4o-mini',                  family: 'openai' },
   anthropic:  { label: 'Anthropic Claude', baseUrl: 'https://api.anthropic.com',                         defaultModel: 'claude-haiku-4-5-20251001',    family: 'anthropic' },
   openrouter: { label: 'OpenRouter',       baseUrl: 'https://openrouter.ai/api/v1',                      defaultModel: 'anthropic/claude-3.5-haiku',   family: 'openai' },
