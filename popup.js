@@ -53,7 +53,7 @@ const PROVIDERS = {
   anthropic:  { label: 'Anthropic Claude', baseUrl: 'https://api.anthropic.com',                         defaultModel: 'claude-haiku-4-5-20251001',    family: 'anthropic' },
   openrouter: { label: 'OpenRouter',       baseUrl: 'https://openrouter.ai/api/v1',                      defaultModel: 'anthropic/claude-3.5-haiku',   family: 'openai' },
   groq:       { label: 'Groq',             baseUrl: 'https://api.groq.com/openai/v1',                    defaultModel: 'llama-3.3-70b-versatile',      family: 'openai' },
-  gemini:     { label: 'Google Gemini',    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',  defaultModel: 'gemini-2.0-flash',             family: 'gemini' },
+  gemini:     { label: 'Google Gemini',    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',  defaultModel: 'gemini-2.5-flash-lite',        family: 'gemini' },
 };
 const DEFAULT_PROVIDER = 'deepseek';
 
@@ -918,6 +918,10 @@ async function* streamLLM({ providerKey, model, apiKey, system, user, temperatur
           temperature,
           max_tokens: maxTokens,
           stream: true,
+          // deepseek-v4-flash defaults to "thinking" mode, which burns the
+          // max_tokens budget on reasoning_content (which we don't read) and
+          // can leave content empty. We only want the direct answer.
+          ...(providerKey === 'deepseek' ? { thinking: { type: 'disabled' } } : {}),
         }),
         signal: controller.signal,
       });
