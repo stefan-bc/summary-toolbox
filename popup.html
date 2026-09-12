@@ -95,6 +95,25 @@
   .ok  { color: var(--success); font-weight: 500; }
   .err { color: var(--error);   font-weight: 500; }
 
+  /* Busy state. Extraction routinely takes ~2.5 s (the player has to fetch the
+     caption track before we can read it), so a static line reads as frozen. */
+  .busy::before {
+    content: '';
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    margin-right: 6px;
+    vertical-align: -1px;
+    border: 1.5px solid var(--border);
+    border-top-color: var(--base-content);
+    border-radius: 50%;
+    animation: status-spin 0.7s linear infinite;
+  }
+  @keyframes status-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .busy::before { animation: none; }
+  }
+
   /* Search filter, sits immediately above the preview pane. */
   #search {
     width: 100%;
@@ -701,7 +720,7 @@
   </header>
 
   <!-- Loading / error / success line. -->
-  <div id="status">Extracting transcript…</div>
+  <div id="status" class="busy">Extracting transcript…</div>
 
   <!-- On scrape failure the popup may offer a diagnostic the user can copy
        back. Hidden unless scrapePage returned a debug payload. -->

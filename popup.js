@@ -213,6 +213,20 @@ window.addEventListener('keydown', (e) => {
 init();
 refreshBalance();
 
+// Failures that mean "try again in a moment" rather than "this video can't work".
+const RETRYABLE_ERRORS = new Set(['not-ready', 'panel-empty']);
+
+// One extraction pass in the page. MAIN world so scrapePage can call the player's
+// getPlayerResponse() / getVideoData() APIs — both page-context only.
+async function runScrape(tabId) {
+  const [{ result } = {}] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: scrapePage,
+  });
+  return result;
+}
+
 async function init() {
   try {
     // Restore toggle preferences before extraction so the first render matches
@@ -243,13 +257,16 @@ async function init() {
     // Revealing it here keeps it consistent with the spacebar shortcut.
     playPauseBtn.hidden = false;
 
-    let [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      // MAIN world so scrapePage can call the player's getPlayerResponse()
-      // API and read window.ytInitialPlayerResponse — both page-context only.
-      world: 'MAIN',
-      func: scrapePage,
-    });
+    setStatus('Extracting transcript…', 'busy');
+    let result = await runScrape(tab.id);
+
+    // Both of these mean "the page wasn't in a fit state", not "this video has no
+    // transcript" — which is why reopening the popup has always appeared to fix it.
+    // Retry once here so the user never has to notice.
+    if (!result?.segments?.length && RETRYABLE_ERRORS.has(result?.error)) {
+      setStatus('Waiting for the player…', 'busy');
+      result = await runScrape(tab.id);
+    }
 
     if (!result?.segments?.length) {
       handleScrapeError(result);
@@ -349,6 +366,7 @@ function handleScrapeError(result) {
   const code = result?.error || 'unknown';
   const messages = {
     'no-button': "This video doesn't have captions available.",
+    'not-ready': 'The video player is still loading. Give it a second, then try again.',
     'panel-empty': "Couldn't load this video's transcript.",
   };
   let msg = messages[code] || result?.error || 'No transcript available.';
@@ -769,7 +787,7 @@ async function summarise() {
     let inputText;
     let systemBase;
     if (mode === 'page') {
-      setStatus('Reading page…');
+      setStatus('Reading page…', 'busy');
       const page = await readPageText();
       if (!page || !page.text) throw new Error("This page has no readable text.");
       // If init() didn't capture a title (e.g. tab.title was empty), pick up
@@ -802,7 +820,7 @@ async function summarise() {
 
     setStatus(truncated
       ? `Sending (truncated) ${subject} to ${provider.label}…`
-      : `Sending ${subject} to ${provider.label}…`);
+      : `Sending ${subject} to ${provider.label}…`, 'busy');
 
     // Stream chunks in. Reveal the summary panel and collapse the transcript
     // straight away so the user sees text appear, not a frozen "Summarising…"
@@ -837,7 +855,7 @@ async function summarise() {
       accumulated += chunk;
       if (firstChunk) {
         firstChunk = false;
-        setStatus(`Receiving from ${provider.label}…`);
+        setStatus(`Receiving from ${provider.label}…`, 'busy');
       }
       scheduleRender();
     }
@@ -1253,7 +1271,7 @@ async function saveToNotion() {
   }
 
   saveNotionBtn.disabled = true;
-  setStatus('Saving to Notion…');
+  setStatus('Saving to Notion…', 'busy');
 
   try {
     // Notion accepts ids with or without dashes; normalise to be safe.
@@ -1478,30 +1496,54 @@ function renderBalance(amount, currency) {
 // the player fetch captions and reads that token out of the Performance API,
 // then fetches the track (json3, then xml). Falls back to reading a transcript
 // already rendered on the page. No panel, no description expand, no scroll.
-// Returns { segments, info } or { error, debug }. Errors: no-button (no
-// captions), panel-empty (couldn't get the caption data).
+// Returns { segments, info } or { error, debug }. Errors: not-ready (the player
+// never produced a response for this video — retryable), no-button (no captions),
+// panel-empty (couldn't get the caption data — retryable).
 async function scrapePage() {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const debug = {};
 
+  const player = () => document.getElementById('movie_player');
+
+  // window.ytInitialPlayerResponse describes the video the DOCUMENT loaded with, and
+  // YouTube never updates it on SPA navigation — it goes stale the moment the user
+  // clicks another video. It stays as a fallback for a player that hasn't exposed
+  // its API yet, but everything below is gated on the id matching the URL.
   const getResponse = () => {
     let r;
-    try { r = document.getElementById('movie_player')?.getPlayerResponse?.(); } catch (e) {}
+    try { r = player()?.getPlayerResponse?.(); } catch (e) {}
     return r || window.ytInitialPlayerResponse;
   };
+  // Live id from the player, which (unlike the global) tracks SPA navigation.
+  const playerVideoId = () => {
+    try { return player()?.getVideoData?.()?.video_id || null; } catch (e) { return null; }
+  };
 
-  // SPA wait — until the player's videoId matches the URL's ?v= so a just-
-  // navigated tab never hands back the previous video's captions.
+  // Wait for a player response belonging to THIS video. Once the ids match the
+  // response is complete, so an empty caption list from that point on is a real
+  // "no captions" verdict rather than a half-loaded page.
   const urlVid = new URL(location.href).searchParams.get('v');
-  if (urlVid) {
-    const started = Date.now();
-    while (Date.now() - started < 5000) {
-      if (getResponse()?.videoDetails?.videoId === urlVid) break;
-      await sleep(100);
-    }
+  const waitStart = Date.now();
+  let response = null;
+  while (Date.now() - waitStart < 5000) {
+    const r = getResponse();
+    if (!urlVid || r?.videoDetails?.videoId === urlVid) { response = r; break; }
+    await sleep(100);
   }
 
-  const response = getResponse();
+  // Recorded so a failure in the wild is diagnosable from the copied payload:
+  // these are what separate "player never loaded" from "video has no captions".
+  debug.waitMs = Date.now() - waitStart;
+  debug.urlVid = urlVid;
+  debug.playerVideoId = playerVideoId();
+  debug.responseVideoId = getResponse()?.videoDetails?.videoId || null;
+  try { debug.captionsModule = (player()?.getOptions?.() || []).includes('captions'); } catch (e) { debug.captionsModule = null; }
+  try { debug.playerTrackCount = (player()?.getOption?.('captions', 'tracklist') || []).length; } catch (e) { debug.playerTrackCount = null; }
+
+  // No matching response: the player never finished loading for this video.
+  // Reading whatever getResponse() returns here would hand back the PREVIOUS
+  // video's transcript and title — silently, under this video's URL.
+  if (!response) return { error: 'not-ready', debug };
 
   const pad = n => String(n).padStart(2, '0');
   const secsToStamp = secs => {
@@ -1537,14 +1579,19 @@ async function scrapePage() {
   // Read the one the player itself uses: toggle the CC (subtitles) button so the
   // player fetches captions, then pull the pot out of the timedtext request the
   // browser recorded in the Performance API. Restore the CC state afterwards.
+  const potNow = () => {
+    try {
+      const e = performance.getEntriesByType('resource')
+        .filter(x => x.name.includes('/api/timedtext?')).pop();
+      if (e) return new URL(e.name).searchParams.get('pot') || '';
+    } catch (x) {}
+    return '';
+  };
   const readPot = async (ms) => {
     const t0 = Date.now();
     while (Date.now() - t0 < ms) {
-      try {
-        const e = performance.getEntriesByType('resource')
-          .filter(x => x.name.includes('/api/timedtext?')).pop();
-        if (e) { const p = new URL(e.name).searchParams.get('pot'); if (p) return p; }
-      } catch (x) {}
+      const p = potNow();
+      if (p) return p;
       await sleep(50);
     }
     return '';
@@ -1555,7 +1602,9 @@ async function scrapePage() {
   const ccOn = (b) => !!b && (b.getAttribute('aria-pressed') === 'true' ||
     b.classList.contains('ytp-button-active') ||
     /captions off|subtitles off/i.test(b.getAttribute('aria-label') || ''));
-  let pot = await readPot(400);  // maybe the player already fetched captions
+  // Nothing in this call creates a timedtext request, so the entry is either
+  // already recorded or it isn't — polling for it only burned ~400 ms per open.
+  let pot = potNow();
   if (!pot) {
     try {
       const cc = CC_SELS.map(s => document.querySelector(s)).find(Boolean);
