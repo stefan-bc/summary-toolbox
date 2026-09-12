@@ -14,20 +14,24 @@ No analytics, no telemetry, no third-party SDKs, no remote code.
 
 ## What leaves your device, and only when
 
-Summary Toolbox only makes network requests on **explicit user action**, with two narrow exceptions documented at the end of this section.
+Summary Toolbox only makes network requests on **your action** — a button click, or opening the popup with an opt-in setting you switched on yourself. Three narrow cases are documented at the end of this section.
 
 | Action | Endpoint | Sent | Trigger |
 |---|---|---|---|
-| Summarise (DeepSeek) | `api.deepseek.com` | Transcript or page text + your prompt | You click Summarise |
-| Summarise (OpenAI) | `api.openai.com` | Transcript or page text + your prompt | You click Summarise |
-| Summarise (Anthropic) | `api.anthropic.com` | Transcript or page text + your prompt | You click Summarise |
-| Summarise (OpenRouter) | `openrouter.ai` | Transcript or page text + your prompt | You click Summarise |
-| Summarise (Groq) | `api.groq.com` | Transcript or page text + your prompt | You click Summarise |
-| Summarise (Gemini) | `generativelanguage.googleapis.com` | Transcript or page text + your prompt | You click Summarise |
+| Summarise (DeepSeek) | `api.deepseek.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
+| Summarise (OpenAI) | `api.openai.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
+| Summarise (Anthropic) | `api.anthropic.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
+| Summarise (OpenRouter) | `openrouter.ai` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
+| Summarise (Groq) | `api.groq.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
+| Summarise (Gemini) | `generativelanguage.googleapis.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
 | Save to Notion | `api.notion.com` | The summary text + the source URL | You click Save to Notion |
 | Save to Obsidian | _Local `obsidian://` URL scheme_ | Summary text | You click Save to Obsidian — never hits the network |
 
-Only one provider host is contacted per Summarise click — whichever you configured.
+Only one provider host is contacted per Summarise — whichever you configured.
+
+### Auto-summarise (opt-in, off by default)
+
+The **Auto** tick beside the status line makes the popup run Summarise as soon as it opens, instead of waiting for a click. It is off unless you switch it on, it does nothing unless you have set an API key, and it is skipped when a cached summary for that page is already on screen — so it sends at most one request per new page, to the same provider host as a manual Summarise. Untick it and no request is ever sent without a click.
 
 ### YouTube caption fetch
 
@@ -56,7 +60,7 @@ If you don't configure any AI provider and don't enter any keys, Summary Toolbox
 | `activeTab` | Read the active tab (YouTube transcript or page text) when you click the toolbar icon. |
 | `scripting` | Inject the transcript scraper, the video-seek function, and (in page mode) the one-shot page-text reader into the active tab. |
 | `storage` | Persist UI toggle preferences and your API credentials locally. |
-| Host permissions for the six AI providers + `api.notion.com` | Send the transcript / page text / summary to whichever provider or save target you have configured, only when you click the relevant button. |
+| Host permissions for the six AI providers + `api.notion.com` | Send the transcript / page text / summary to whichever provider or save target you have configured, only when you click the relevant button — or, for Summarise alone, when the popup opens with the opt-in **Auto** tick switched on. |
 
 ## Contact
 

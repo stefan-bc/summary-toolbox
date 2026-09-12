@@ -11,6 +11,7 @@ Chrome extension for grabbing YouTube video transcripts — searchable preview, 
 - **Strip non-speech markers** toggle — removes `[Music]`, `[Applause]`, etc.
 - **Copy** to clipboard, or **download** as TXT or SRT.
 - **AI summary (BYOK)** — generate a 5–7 bullet summary of a YouTube transcript *or* the active web page, via DeepSeek, OpenAI, Anthropic Claude, OpenRouter, Groq, or Google Gemini. Then **Copy**, **Save to Obsidian**, or **Save to Notion**.
+- **Auto** tick — opt-in (off by default). When set, opening the popup runs Summarise straight away instead of waiting for a click. Skipped if a cached summary is already showing, or if no API key is set.
 - **Dark mode** — follows the OS preference automatically.
 - Preferences and API credentials persist between opens (locally, never synced).
 
@@ -77,11 +78,13 @@ All values are stored in `chrome.storage.local` and never synced.
 
 Transcripts and page text are read directly from the active tab via `chrome.scripting` and stay in your browser. Preferences and credentials are in `chrome.storage.local` (local device only, not synced). No analytics, no telemetry, no third-party SDKs.
 
-Network requests only fire on explicit user action, and only to the host of your **configured provider**:
+Network requests fire only on your action — a button click, or opening the popup with the opt-in **Auto** tick switched on — and only to the host of your **configured provider**:
 
 - **Summarise** → `POST` to one of `api.deepseek.com`, `api.openai.com`, `api.anthropic.com`, `openrouter.ai`, `api.groq.com`, or `generativelanguage.googleapis.com` (whichever you picked) with the transcript or page text.
 - **Save to Notion** → `PATCH https://api.notion.com/v1/blocks/<page>/children` with the summary content.
 - **Save to Obsidian** → uses the local `obsidian://` URL scheme; never hits the network.
+
+The **Auto** tick (off by default) is the one case where a Summarise request is sent without a click: with it on, opening the popup on a page you haven't already summarised sends the transcript or page text to your configured provider. Everything else needs an explicit click.
 
 If you don't configure any AI features, the extension makes zero network requests.
 

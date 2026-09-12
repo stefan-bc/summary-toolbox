@@ -1619,9 +1619,10 @@ async function scrapePage() {
   const CC_SELS = ['button.ytp-subtitles-button.ytp-button', '.ytp-subtitles-button',
     "button[aria-label*='Captions']", "button[aria-label*='captions']",
     "button[aria-label*='Subtitles']", "button[aria-label*='subtitles']"];
-  const ccOn = (b) => !!b && (b.getAttribute('aria-pressed') === 'true' ||
-    b.classList.contains('ytp-button-active') ||
-    /captions off|subtitles off/i.test(b.getAttribute('aria-label') || ''));
+  // aria-pressed is the only signal the player actually sets: checked against the
+  // live DOM, ytp-button-active never appears on this button and the aria-label
+  // stays "Subtitles/closed captions…" in both states.
+  const ccOn = (b) => !!b && b.getAttribute('aria-pressed') === 'true';
   // Nothing in this call creates a timedtext request, so the entry is either
   // already recorded or it isn't — polling for it only burned ~400 ms per open.
   let pot = potNow();
