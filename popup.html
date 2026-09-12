@@ -74,27 +74,15 @@
     gap: 8px;
     margin: 0 0 10px;
   }
-  /* Auto-summarise tick. Deliberately quiet: it arms an API call on every popup
-     open, so it should be findable, not inviting. */
+  /* Auto-summarise tick. Wears .toggle-row so it matches the transcript toggles;
+     these override only what sitting on the status row needs. */
   #auto-row {
     flex: none;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10px;
-    line-height: 1;
-    color: var(--base-muted);
+    margin-bottom: 0;
     cursor: pointer;
-    user-select: none;
   }
   #auto-row:hover { color: var(--base-content); }
-  #auto-row input {
-    width: 11px;
-    height: 11px;
-    margin: 0;
-    accent-color: var(--secondary);
-    cursor: pointer;
-  }
+  #auto-row input { cursor: pointer; }
   h1 {
     margin: 0;
     font-size: 13px;
@@ -756,9 +744,9 @@
     <!-- Summarise as soon as the popup opens. Off by default. Skipped when a
          cached summary is already on screen, so revisiting a page doesn't
          re-spend tokens replacing a result the user can already see. -->
-    <label id="auto-row" title="Summarise automatically when the popup opens">
-      <span>Auto</span>
+    <label id="auto-row" class="toggle-row" title="Summarise automatically when the popup opens">
       <input type="checkbox" id="auto-summarise">
+      Auto
     </label>
   </div>
 
