@@ -28,6 +28,7 @@ const saveNotionBtn = document.getElementById('save-notion');
 const settingsEl = document.getElementById('settings');
 const balanceEl = document.getElementById('balance');
 const playPauseBtn = document.getElementById('play-pause-btn');
+const autoSummariseEl = document.getElementById('auto-summarise');
 
 // Data + page context, populated in init().
 // `mode` flips between 'youtube' (transcript flow) and 'page' (summarise the
@@ -231,9 +232,10 @@ async function init() {
   try {
     // Restore toggle preferences before extraction so the first render matches
     // what the user last chose.
-    const prefs = await chrome.storage.local.get(['stamps', 'stripNoise']);
+    const prefs = await chrome.storage.local.get(['stamps', 'stripNoise', 'autoSummarise']);
     if (prefs.stamps === false) stampsEl.checked = false;
     if (prefs.stripNoise === true) stripNoiseEl.checked = true;
+    if (prefs.autoSummarise === true) autoSummariseEl.checked = true;
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
@@ -286,8 +288,9 @@ async function init() {
     transcriptPaneEl.hidden = false;
     controlsEl.hidden = false;
     setStatus('Ready.', 'ok');
-    // Restore the last summary for this URL if we have one cached.
-    restoreCachedSummary();
+    // Restore the last summary for this URL if we have one cached, then let the
+    // Auto tick decide whether to run a fresh one.
+    restoreCachedSummary().then(maybeAutoSummarise);
   } catch (e) {
     setStatus(`Error: ${e.message}`, 'err');
   }
@@ -320,7 +323,18 @@ function initPageMode(tab, parsedUrl) {
   extraPromptEl.placeholder = 'Custom instruction…';
 
   setStatus('Ready to summarise this page.', 'ok');
-  restoreCachedSummary();
+  restoreCachedSummary().then(maybeAutoSummarise);
+}
+
+// Auto-summarise on open, when the header's Auto tick is set. Two deliberate
+// bail-outs: a cached summary already on screen (re-running would spend tokens
+// replacing a result the user can see), and no API key (summarise() would only
+// pop the settings panel open at them every single time).
+async function maybeAutoSummarise(restoredFromCache) {
+  if (restoredFromCache) return;
+  const { autoSummarise, llmKey } = await chrome.storage.local.get(['autoSummarise', 'llmKey']);
+  if (!autoSummarise || !(llmKey || '').trim()) return;
+  summarise();
 }
 
 // Schemes/hosts where chrome.scripting can't run. Used to fail fast in page
@@ -612,6 +626,9 @@ stampsEl.addEventListener('change', () => {
 stripNoiseEl.addEventListener('change', () => {
   chrome.storage.local.set({ stripNoise: stripNoiseEl.checked });
   renderPreview();
+});
+autoSummariseEl.addEventListener('change', () => {
+  chrome.storage.local.set({ autoSummarise: autoSummariseEl.checked });
 });
 
 // Debounced search — avoids re-rendering the list on every keystroke for
@@ -1388,20 +1405,23 @@ async function saveSummaryToHistory() {
 // Look up a cached summary for the current URL and render it. Called from the
 // end of init()/initPageMode() — segments (YouTube) are loaded by then, so
 // timestamp chips can validate against the actual transcript.
+// Resolves true when a cached summary was put on screen, which is what tells
+// maybeAutoSummarise to stand down.
 async function restoreCachedSummary() {
-  if (!pageUrl) return;
+  if (!pageUrl) return false;
   const key = cacheKeyForUrl(pageUrl);
-  if (!key) return;
+  if (!key) return false;
   const { summaryHistory = {} } = await chrome.storage.local.get('summaryHistory');
   const entry = summaryHistory[key];
-  if (!entry || !entry.summary) return;
+  if (!entry || !entry.summary) return false;
   // Only restore an entry that matches the current popup mode — a cached
   // page summary on a YouTube URL would render without working chips.
-  if (entry.mode && entry.mode !== mode) return;
+  if (entry.mode && entry.mode !== mode) return false;
 
   lastSummary = entry.summary;
   renderSummary(entry.summary, { meta: `Previous summary from ${relativeTime(entry.ts)}` });
   summarySection.hidden = false;
+  return true;
 }
 
 function relativeTime(ts) {
