@@ -63,18 +63,21 @@
   .header-actions {
     flex: none;
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 3px;
-  }
-  .header-actions-row {
-    display: flex;
     align-items: center;
     gap: 4px;
   }
-  /* Auto-summarise tick, sitting under the balance pill. Deliberately quiet: it
-     arms an API call on every popup open, so it should be findable, not inviting. */
+  /* Status line and the Auto tick share a row: status takes the slack, the tick
+     sits on the right content margin. */
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 10px;
+  }
+  /* Auto-summarise tick. Deliberately quiet: it arms an API call on every popup
+     open, so it should be findable, not inviting. */
   #auto-row {
+    flex: none;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -111,7 +114,9 @@
 
   /* Status line — loading, errors, success confirmations. */
   #status {
-    margin: 0 0 10px;
+    flex: 1;
+    min-width: 0;
+    margin: 0;
     font-size: 12px;
     line-height: 1.4;
     min-height: 16px;
@@ -736,26 +741,26 @@
     <!-- Top-right utility cluster — play/pause toggle and DeepSeek balance.
          Tighter internal spacing makes them read as a single anchored unit. -->
     <div class="header-actions">
-      <div class="header-actions-row">
-        <!-- Toggles play/pause on the YouTube tab without closing the popup.
-             Hidden until a YouTube extraction succeeds (revealed in init()). -->
-        <button id="play-pause-btn" type="button" hidden title="Play / pause (or press space)">⏯</button>
-        <!-- DeepSeek remaining-credit pill. Populated by refreshBalance() when
-             the provider is DeepSeek; hidden otherwise. -->
-        <div id="balance" hidden title="DeepSeek balance"></div>
-      </div>
-      <!-- Summarise as soon as the popup opens. Off by default. Skipped when a
-           cached summary is already on screen, so revisiting a page doesn't
-           re-spend tokens replacing a result the user can already see. -->
-      <label id="auto-row" title="Summarise automatically when the popup opens">
-        <span>Auto</span>
-        <input type="checkbox" id="auto-summarise">
-      </label>
+      <!-- Toggles play/pause on the YouTube tab without closing the popup.
+           Hidden until a YouTube extraction succeeds (revealed in init()). -->
+      <button id="play-pause-btn" type="button" hidden title="Play / pause (or press space)">⏯</button>
+      <!-- DeepSeek remaining-credit pill. Populated by refreshBalance() when
+           the provider is DeepSeek; hidden otherwise. -->
+      <div id="balance" hidden title="DeepSeek balance"></div>
     </div>
   </header>
 
   <!-- Loading / error / success line. -->
-  <div id="status" class="busy">Extracting transcript…</div>
+  <div class="status-row">
+    <div id="status" class="busy">Extracting transcript…</div>
+    <!-- Summarise as soon as the popup opens. Off by default. Skipped when a
+         cached summary is already on screen, so revisiting a page doesn't
+         re-spend tokens replacing a result the user can already see. -->
+    <label id="auto-row" title="Summarise automatically when the popup opens">
+      <span>Auto</span>
+      <input type="checkbox" id="auto-summarise">
+    </label>
+  </div>
 
   <!-- On scrape failure the popup may offer a diagnostic the user can copy
        back. Hidden unless scrapePage returned a debug payload. -->
