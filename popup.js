@@ -20,6 +20,7 @@ const debugRow = document.getElementById('debug-row');
 const copyDebugBtn = document.getElementById('copy-debug');
 const summarizeBtn = document.getElementById('summarize');
 const extraPromptEl = document.getElementById('extra-prompt');
+const extraLockBtn = document.getElementById('extra-lock');
 const summarySection = document.getElementById('summary-section');
 const summaryContent = document.getElementById('summary-content');
 const copySummaryBtn = document.getElementById('copy-summary');
@@ -94,7 +95,7 @@ chrome.storage.local.get('uiZoom').then(({ uiZoom }) => {
 
 // Populate the settings panel from chrome.storage and persist on input change.
 async function initSettings() {
-  const keys = SETTING_FIELDS.map(([, k]) => k).concat(['extraPrompt', 'deepseekKey']);
+  const keys = SETTING_FIELDS.map(([, k]) => k).concat(['deepseekKey']);
   const values = await chrome.storage.local.get(keys);
 
   // One-time migration: prior versions stored the key as `deepseekKey`.
@@ -135,13 +136,42 @@ async function initSettings() {
   }
 
   await initModelPicker();
+}
+initSettings();
 
-  // Extra-prompt line: persist on every change (input + change events) so
-  // edits survive popup close even without an explicit blur.
-  extraPromptEl.value = values.extraPrompt || '';
-  const persistExtra = () => chrome.storage.local.set({ extraPrompt: extraPromptEl.value });
+// Custom-instruction line. Persisted on every edit so it survives popup close.
+// `extraPromptUrl` records the page it was typed on (cache-key form); when the
+// lock is off and the popup opens on a different video/page, the line clears.
+// summarise() awaits this so auto-summarise can't send a stale instruction.
+async function initExtraPrompt() {
+  const [stored, [tab]] = await Promise.all([
+    chrome.storage.local.get(['extraPrompt', 'extraPromptUrl', 'extraPromptLocked']),
+    chrome.tabs.query({ active: true, currentWindow: true }),
+  ]);
+  const hereKey = cacheKeyForUrl(tab?.url || '');
+  const locked = stored.extraPromptLocked === true;
+
+  let text = stored.extraPrompt || '';
+  if (!locked && text && stored.extraPromptUrl !== hereKey) {
+    text = '';
+    await chrome.storage.local.set({ extraPrompt: '' });
+  }
+  extraPromptEl.value = text;
+  setLockState(locked);
+
+  const persistExtra = () => chrome.storage.local.set({
+    extraPrompt: extraPromptEl.value,
+    extraPromptUrl: hereKey,
+  });
   extraPromptEl.addEventListener('input', persistExtra);
   extraPromptEl.addEventListener('change', persistExtra);
+  extraLockBtn.addEventListener('click', () => {
+    const next = extraLockBtn.getAttribute('aria-pressed') !== 'true';
+    setLockState(next);
+    // Stamp the current page too, so unlocking keeps the line on this page
+    // and only clears it on the next one.
+    chrome.storage.local.set({ extraPromptLocked: next, extraPromptUrl: hereKey });
+  });
   // Enter triggers Summarise — modifier-free only, so browser shortcuts
   // (e.g. ⌘⏎) keep working as expected.
   extraPromptEl.addEventListener('keydown', (e) => {
@@ -151,7 +181,14 @@ async function initSettings() {
     }
   });
 }
-initSettings();
+const extraPromptReady = initExtraPrompt();
+
+function setLockState(locked) {
+  extraLockBtn.setAttribute('aria-pressed', String(locked));
+  extraLockBtn.title = locked
+    ? 'Locked: kept for every video and page'
+    : 'Unlocked: cleared on the next video or page';
+}
 
 // --------------------------------------------------------------------------
 // Provider / model / key picker. Key and model are remembered per provider
@@ -910,8 +947,9 @@ async function summarise() {
   // field is missing, flagSettingsField() below re-opens the panel and points
   // the user at the right input.
   settingsEl.open = false;
+  await extraPromptReady;
   const stored = await chrome.storage.local.get([
-    'llmProvider', 'llmModel', 'llmKey', 'extraPrompt',
+    'llmProvider', 'llmModel', 'llmKey',
     'summaryTemp', 'summaryMaxTokens', 'ytPrompt', 'pagePrompt',
   ]);
   const providerKey = stored.llmProvider || DEFAULT_PROVIDER;
@@ -976,8 +1014,8 @@ async function summarise() {
     const truncated = inputText.length > SUMMARY_INPUT_CAP;
     if (truncated) inputText = inputText.slice(0, SUMMARY_INPUT_CAP);
 
-    // Live extra-prompt input wins so unblurred edits aren't lost.
-    const extra = (extraPromptEl.value || stored.extraPrompt || '').trim();
+    // Live input value, not storage — it already reflects the lock decision.
+    const extra = extraPromptEl.value.trim();
     const systemContent = extra
       ? `${systemBase}\n\nThe user added a specific request: "${extra}"\nBefore the bullet points, write a brief 2–3 sentence direct answer to that request as plain prose (no bullet markers, no heading). Then output the bullets as instructed above.`
       : systemBase;

@@ -52,7 +52,7 @@ Reassign the shortcut at `chrome://extensions/shortcuts` if it clashes with some
 
 ## Summary + save (optional)
 
-The **Summarise** button is opt-in and requires a BYOK (bring-your-own-key) for one of seven LLM providers. Output is 5–7 bullet points covering the main topics. The "Extra focus" input lets you persist priorities the model should weight on every run (e.g. *"key takeaways for beginners"*); pressing Enter triggers Summarise.
+The **Summarise** button is opt-in and requires a BYOK (bring-your-own-key) for one of seven LLM providers. Output is 5–7 bullet points covering the main topics. The "Custom instruction" input adds priorities the model should weight (e.g. *"key takeaways for beginners"*); pressing Enter triggers Summarise. The lock at its right edge decides how long the instruction lasts: unlocked (default) clears it when you open the popup on a different video or page, locked keeps it for every one.
 
 ### Setup
 

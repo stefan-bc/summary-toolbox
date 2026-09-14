@@ -250,11 +250,11 @@
 
   /* Persisted custom-prompt line that sits beneath Summarise. Plain input,
      no accent border — keeps the popup quiet. */
+  .extra-prompt-wrap { position: relative; margin-top: 6px; }
   #extra-prompt {
     width: 100%;
     box-sizing: border-box;
-    margin-top: 6px;
-    padding: 7px 9px;
+    padding: 7px 28px 7px 9px;
     font: 12px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     color: var(--base-content);
     background: var(--base-200);
@@ -268,6 +268,30 @@
     border-color: var(--primary);
     box-shadow: 0 0 0 2px rgba(45, 82, 120, 0.30);
   }
+
+  /* Lock in the input's right edge. Unlocked (default): the instruction is
+     cleared when the popup opens on a different video/page. Locked: kept. */
+  #extra-lock {
+    position: absolute;
+    top: 50%;
+    right: 5px;
+    transform: translateY(-50%);
+    display: flex;
+    padding: 3px;
+    color: var(--base-muted);
+    background: none;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.1s ease, color 0.1s ease;
+  }
+  #extra-lock:hover { opacity: 1; }
+  #extra-lock[aria-pressed="true"] { color: var(--base-content); opacity: 1; }
+  #extra-lock svg { width: 12px; height: 12px; }
+  #extra-lock .shackle-open { display: none; }
+  #extra-lock[aria-pressed="false"] .shackle-open { display: inline; }
+  #extra-lock[aria-pressed="false"] .shackle-closed { display: none; }
 
   /* Download chips row + diagnostic-copy button share the same chip style. */
   .export-row {
@@ -772,10 +796,21 @@
   <div id="controls" hidden>
     <button id="copy" class="primary">Copy transcript</button>
     <button id="summarize" class="secondary" type="button">Summarise</button>
-    <!-- Persisted extra-focus line; appended to the system prompt on every
-         Summarise click. Pressing Enter triggers Summarise. -->
-    <input id="extra-prompt" type="text" autocomplete="off" spellcheck="false"
-           placeholder="Custom instruction…">
+    <!-- Extra-focus line; appended to the system prompt on every Summarise
+         click. Pressing Enter triggers Summarise. The lock decides whether it
+         survives a move to another video/page. -->
+    <div class="extra-prompt-wrap">
+      <input id="extra-prompt" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Custom instruction…">
+      <button id="extra-lock" type="button" aria-pressed="false"
+              aria-label="Keep instruction for every video and page">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+          <rect x="3" y="7" width="10" height="7.5" rx="1.5"/>
+          <path class="shackle-closed" d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>
+          <path class="shackle-open" d="M5.5 7V5a2.5 2.5 0 0 1 4.9-.7"/>
+        </svg>
+      </button>
+    </div>
 
     <!-- Summary result — populated after a successful LLM call. -->
     <div id="summary-section" hidden>
