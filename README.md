@@ -10,7 +10,7 @@ Chrome extension for grabbing YouTube video transcripts — searchable preview, 
 - **Include timestamps** toggle — prefix copied/downloaded text with `[mm:ss]`.
 - **Strip non-speech markers** toggle — removes `[Music]`, `[Applause]`, etc.
 - **Copy** to clipboard, or **download** as TXT or SRT.
-- **AI summary (BYOK)** — generate a 5–7 bullet summary of a YouTube transcript *or* the active web page, via DeepSeek, OpenAI, Anthropic Claude, OpenRouter, Groq, or Google Gemini. Then **Copy**, **Save to Obsidian**, or **Save to Notion**.
+- **AI summary (BYOK)** — generate a 5–7 bullet summary of a YouTube transcript *or* the active web page, via DeepSeek, OpenAI, Anthropic Claude, Mistral, OpenRouter, Groq, Google Gemini, or your own OpenAI-compatible endpoint (e.g. FreeLLMAPI). Then **Copy**, **Save to Obsidian**, or **Save to Notion**.
 - **Auto** tick — opt-in (off by default). When set, opening the popup runs Summarise straight away instead of waiting for a click. Skipped if a cached summary is already showing, or if no API key is set.
 - **Dark mode** — follows the OS preference automatically.
 - Preferences and API credentials persist between opens (locally, never synced).
@@ -52,16 +52,19 @@ Reassign the shortcut at `chrome://extensions/shortcuts` if it clashes with some
 
 ## Summary + save (optional)
 
-The **Summarise** button is opt-in and requires a BYOK (bring-your-own-key) for one of six LLM providers. Output is 5–7 bullet points covering the main topics. The "Extra focus" input lets you persist priorities the model should weight on every run (e.g. *"key takeaways for beginners"*); pressing Enter triggers Summarise.
+The **Summarise** button is opt-in and requires a BYOK (bring-your-own-key) for one of seven LLM providers, or points at your own OpenAI-compatible endpoint. Output is 5–7 bullet points covering the main topics. The "Extra focus" input lets you persist priorities the model should weight on every run (e.g. *"key takeaways for beginners"*); pressing Enter triggers Summarise.
 
 ### Setup
 
 Open the **Settings** panel at the bottom of the popup and fill in only what you need:
 
 #### AI provider
-- **Provider** — pick one of: DeepSeek, OpenAI, Anthropic Claude, OpenRouter, Groq, Google Gemini.
-- **Model** — leave empty to use the provider default (shown as placeholder), or override with a specific model name.
-- **API key** — get one from your chosen provider's dashboard. The same field stores keys per session; switching providers needs you to re-enter the key for the new one.
+- **Provider** — DeepSeek, OpenAI, Anthropic Claude, Mistral, OpenRouter, Groq, Google Gemini, or **Custom endpoint**.
+- **Base URL** (Custom endpoint only) — any OpenAI-compatible server, local or on your own domain, e.g. FreeLLMAPI at `http://localhost:3001/v1`. The first ↻ click asks Chrome for access to that host.
+- **API key** — from your provider's dashboard (optional for custom endpoints that don't need one).
+- **Model** — Default, a short suggested list, or **Custom model ID…**. **↻** loads the full list of chat models your key can use from the provider.
+
+Key and model are remembered per provider — switching provider and back restores both.
 
 #### Save to Obsidian
 - **Vault name** + **File path** — appends summaries to one Markdown file in your vault. Requires the [Advanced URI](https://github.com/Vinzent03/obsidian-advanced-uri) community plugin.
@@ -80,7 +83,8 @@ Transcripts and page text are read directly from the active tab via `chrome.scri
 
 Network requests fire only on your action — a button click, or opening the popup with the opt-in **Auto** tick switched on — and only to the host of your **configured provider**:
 
-- **Summarise** → `POST` to one of `api.deepseek.com`, `api.openai.com`, `api.anthropic.com`, `openrouter.ai`, `api.groq.com`, or `generativelanguage.googleapis.com` (whichever you picked) with the transcript or page text.
+- **Summarise** → `POST` to one of `api.deepseek.com`, `api.openai.com`, `api.anthropic.com`, `api.mistral.ai`, `openrouter.ai`, `api.groq.com`, `generativelanguage.googleapis.com`, or your custom endpoint's host (whichever you picked) with the transcript or page text.
+- **↻ (load models)** → `GET` the configured provider's model list, only when you click it.
 - **Save to Notion** → `PATCH https://api.notion.com/v1/blocks/<page>/children` with the summary content.
 - **Save to Obsidian** → uses the local `obsidian://` URL scheme; never hits the network.
 

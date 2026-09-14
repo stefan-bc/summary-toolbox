@@ -21,6 +21,9 @@ Summary Toolbox only makes network requests on **your action** — a button clic
 | Summarise (DeepSeek) | `api.deepseek.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
 | Summarise (OpenAI) | `api.openai.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
 | Summarise (Anthropic) | `api.anthropic.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
+| Summarise (Mistral) | `api.mistral.ai` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
+| Summarise (Custom endpoint) | The host you entered as Base URL | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
+| Load model list (↻) | Your configured provider's host | Your API key (as auth) | You click ↻ in Settings |
 | Summarise (OpenRouter) | `openrouter.ai` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
 | Summarise (Groq) | `api.groq.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
 | Summarise (Gemini) | `generativelanguage.googleapis.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
@@ -60,7 +63,8 @@ If you don't configure any AI provider and don't enter any keys, Summary Toolbox
 | `activeTab` | Read the active tab (YouTube transcript or page text) when you click the toolbar icon. |
 | `scripting` | Inject the transcript scraper, the video-seek function, and (in page mode) the one-shot page-text reader into the active tab. |
 | `storage` | Persist UI toggle preferences and your API credentials locally. |
-| Host permissions for the six AI providers + `api.notion.com` | Send the transcript / page text / summary to whichever provider or save target you have configured, only when you click the relevant button — or, for Summarise alone, when the popup opens with the opt-in **Auto** tick switched on. |
+| Host permissions for the seven AI providers + `api.notion.com` | Send the transcript / page text / summary to whichever provider or save target you have configured, only when you click the relevant button — or, for Summarise alone, when the popup opens with the opt-in **Auto** tick switched on. |
+| Optional host permissions (`http://*/*`, `https://*/*`) | Requested at runtime for the single host you enter as a Custom endpoint base URL, when you click ↻. Nothing is granted until you approve Chrome's prompt, and only that host is granted. |
 
 ## Contact
 

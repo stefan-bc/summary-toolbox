@@ -510,6 +510,16 @@
     box-shadow: 0 0 0 2px rgba(45, 82, 120, 0.30);
   }
 
+  /* Model picker: dropdown + ↻ load button on one row, optional free-text
+     ID underneath. Mirrors .settings-grid label spacing. */
+  .settings-grid [hidden] { display: none; }
+  .model-field { display: flex; flex-direction: column; gap: 3px; }
+  .model-field > label { font-size: 11px; color: var(--base-muted); }
+  .model-row { display: flex; gap: 6px; align-items: center; }
+  .model-row select { flex: 1; min-width: 0; }
+  .model-row .zoom-step { flex: none; height: 24px; width: 24px; }
+  #model-hint.err { font-weight: 400; }
+
   /* Zoom slider row: −/+ buttons flank a native range input with a live %
      readout on the right. The range uses the same muted slate accent as the
      primary action button so it visually belongs with the rest of the popup. */
@@ -840,20 +850,31 @@
             <option value="deepseek">DeepSeek</option>
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic Claude</option>
+            <option value="mistral">Mistral</option>
             <option value="openrouter">OpenRouter</option>
             <option value="groq">Groq</option>
             <option value="gemini">Google Gemini</option>
+            <option value="custom">Custom endpoint (OpenAI-compatible)</option>
           </select>
         </label>
-        <label>
-          <span>Model (leave empty to use provider default)</span>
-          <input type="text" id="set-llm-model" autocomplete="off" spellcheck="false">
+        <label id="base-url-row" hidden>
+          <span>Base URL</span>
+          <input type="url" id="set-llm-base" placeholder="http://localhost:3001/v1" autocomplete="off" spellcheck="false">
         </label>
         <label>
           <span>API key</span>
           <input type="password" id="set-llm-key" autocomplete="off" spellcheck="false">
         </label>
+        <div class="model-field">
+          <label for="set-llm-model">Model</label>
+          <div class="model-row">
+            <select id="set-llm-model"></select>
+            <button type="button" id="load-models" class="zoom-step" title="Load the full model list from the provider" aria-label="Load models from provider">&#8635;</button>
+          </div>
+          <input type="text" id="set-llm-model-custom" placeholder="Exact model ID" autocomplete="off" spellcheck="false" hidden>
+        </div>
       </div>
+      <div class="settings-hint" id="model-hint"></div>
     </details>
 
     <details class="settings-section">

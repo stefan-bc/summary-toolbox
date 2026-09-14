@@ -47,22 +47,35 @@ let pendingDebug = '';
 let lastSummary = '';
 
 // LLM provider catalogue. Three API families share three adapter functions
-// in callLLM; each provider just maps to a baseUrl + default model.
+// in streamLLM; each provider maps to a baseUrl + default model. `models` is a
+// short suggestion list (checked against provider docs / OpenRouter's catalogue
+// 2026-09-14) — model IDs rot fast, so the Settings ↻ button pulls the live
+// list from the provider and that is the authoritative source.
 const PROVIDERS = {
-  deepseek:   { label: 'DeepSeek',         baseUrl: 'https://api.deepseek.com',                          defaultModel: 'deepseek-flash',               family: 'openai' },
-  openai:     { label: 'OpenAI',           baseUrl: 'https://api.openai.com/v1',                         defaultModel: 'gpt-4o-mini',                  family: 'openai' },
-  anthropic:  { label: 'Anthropic Claude', baseUrl: 'https://api.anthropic.com',                         defaultModel: 'claude-haiku-4-5-20251001',    family: 'anthropic' },
-  openrouter: { label: 'OpenRouter',       baseUrl: 'https://openrouter.ai/api/v1',                      defaultModel: 'anthropic/claude-3.5-haiku',   family: 'openai' },
-  groq:       { label: 'Groq',             baseUrl: 'https://api.groq.com/openai/v1',                    defaultModel: 'llama-3.3-70b-versatile',      family: 'openai' },
-  gemini:     { label: 'Google Gemini',    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',  defaultModel: 'gemini-2.5-flash-lite',        family: 'gemini' },
+  deepseek:   { label: 'DeepSeek',         baseUrl: 'https://api.deepseek.com',                          defaultModel: 'deepseek-flash',               family: 'openai',
+                models: ['deepseek-flash', 'deepseek-v4-pro'] },
+  openai:     { label: 'OpenAI',           baseUrl: 'https://api.openai.com/v1',                         defaultModel: 'gpt-5.6-luna',                 family: 'openai',
+                models: ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-6-astra'] },
+  anthropic:  { label: 'Anthropic Claude', baseUrl: 'https://api.anthropic.com',                         defaultModel: 'claude-haiku-4-5-20251001',    family: 'anthropic',
+                models: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5', 'claude-fable-5-1'] },
+  mistral:    { label: 'Mistral',          baseUrl: 'https://api.mistral.ai/v1',                         defaultModel: 'mistral-small-latest',         family: 'openai',
+                models: ['mistral-small-latest', 'mistral-medium-latest', 'mistral-large-latest', 'ministral-3-8b-2512'] },
+  openrouter: { label: 'OpenRouter',       baseUrl: 'https://openrouter.ai/api/v1',                      defaultModel: 'anthropic/claude-haiku-4.5',   family: 'openai',
+                models: ['anthropic/claude-haiku-4.5', 'openrouter/auto', 'google/gemini-3.5-flash-lite', 'openai/gpt-5.6-luna', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603', 'moonshotai/kimi-k3', 'anthropic/claude-sonnet-5'] },
+  groq:       { label: 'Groq',             baseUrl: 'https://api.groq.com/openai/v1',                    defaultModel: 'llama-3.3-70b-versatile',      family: 'openai',
+                models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b'] },
+  gemini:     { label: 'Google Gemini',    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',  defaultModel: 'gemini-2.5-flash-lite',        family: 'gemini',
+                models: ['gemini-2.5-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-pro'] },
+  // User-hosted OpenAI-compatible endpoint (FreeLLMAPI, LiteLLM, Ollama, …).
+  // baseUrl comes from Settings; host access is requested at runtime via
+  // optional_host_permissions. `auto` is FreeLLMAPI's let-the-router-pick model.
+  custom:     { label: 'Custom endpoint',  baseUrl: '',                                                  defaultModel: 'auto',                         family: 'openai',
+                models: ['auto'], keyOptional: true },
 };
 const DEFAULT_PROVIDER = 'deepseek';
 
 // Settings field IDs ↔ storage keys. Bound on load so each change persists.
 const SETTING_FIELDS = [
-  ['set-provider',     'llmProvider'],
-  ['set-llm-model',    'llmModel'],
-  ['set-llm-key',      'llmKey'],
   ['set-summary-temp', 'summaryTemp'],
   ['set-summary-max',  'summaryMaxTokens'],
   ['set-yt-prompt',    'ytPrompt'],
@@ -104,7 +117,6 @@ async function initSettings() {
   // edit, future updates to the default in code don't reach them; clearing
   // the field reverts to the current default on next open.
   const FIELD_DEFAULTS = {
-    llmProvider: DEFAULT_PROVIDER,
     ytPrompt: SUMMARY_SYSTEM_PROMPT,
     pagePrompt: PAGE_SUMMARY_SYSTEM_PROMPT,
   };
@@ -123,24 +135,11 @@ async function initSettings() {
     // to the built-in default — so clearing the field reverts on next open.
     const isPrompt = key === 'ytPrompt' || key === 'pagePrompt';
     el.addEventListener(isPrompt ? 'input' : 'change', async () => {
-      // Await the write before refreshing the balance pill — refreshBalance
-      // reads provider+key from storage, so a fire-and-forget set would race
-      // and refetch with the previous credentials.
       await chrome.storage.local.set({ [key]: el.value.trim() });
-      if (key === 'llmProvider' || key === 'llmKey') refreshBalance({ force: true });
     });
   }
 
-  // Provider dropdown drives the Model placeholder so users see what default
-  // they'd get if they leave the override blank.
-  const providerEl = document.getElementById('set-provider');
-  const modelEl = document.getElementById('set-llm-model');
-  const refreshModelPlaceholder = () => {
-    const def = PROVIDERS[providerEl.value] || PROVIDERS[DEFAULT_PROVIDER];
-    modelEl.placeholder = def.defaultModel;
-  };
-  providerEl.addEventListener('change', refreshModelPlaceholder);
-  refreshModelPlaceholder();
+  await initModelPicker();
 
   // Extra-prompt line: persist on every change (input + change events) so
   // edits survive popup close even without an explicit blur.
@@ -158,6 +157,180 @@ async function initSettings() {
   });
 }
 initSettings();
+
+// --------------------------------------------------------------------------
+// Provider / model / key picker. Key and model are remembered per provider
+// (`llmKeys`, `llmModels`) so switching provider and back restores both.
+// `llmProvider` / `llmKey` / `llmModel` / `llmBaseUrl` mirror the active
+// provider so summarise() and the balance pill read one flat set of keys.
+// --------------------------------------------------------------------------
+const MODEL_CUSTOM = '__custom__';
+// IDs that /models endpoints list but chat completions can't serve.
+const NON_CHAT_MODEL = /embed|whisper|tts|dall-e|image|audio|realtime|moderation|transcri|speech|guard|ocr|sora|search|computer-use|:batch$/i;
+
+async function initModelPicker() {
+  const providerEl = document.getElementById('set-provider');
+  const baseRow = document.getElementById('base-url-row');
+  const baseEl = document.getElementById('set-llm-base');
+  const modelSel = document.getElementById('set-llm-model');
+  const customEl = document.getElementById('set-llm-model-custom');
+  const keyEl = document.getElementById('set-llm-key');
+  const loadBtn = document.getElementById('load-models');
+  const hintEl = document.getElementById('model-hint');
+
+  const st = await chrome.storage.local.get([
+    'llmProvider', 'llmKey', 'llmModel', 'llmKeys', 'llmModels', 'llmModelLists', 'llmBaseUrl',
+  ]);
+  let provider = PROVIDERS[st.llmProvider] ? st.llmProvider : DEFAULT_PROVIDER;
+  const keys = st.llmKeys || {};
+  const models = st.llmModels || {};
+  const lists = st.llmModelLists || {};
+  // One-time migration from the single global key/model slot.
+  if (!st.llmKeys) {
+    if (st.llmKey) keys[provider] = st.llmKey;
+    if (st.llmModel) models[provider] = st.llmModel;
+  }
+  baseEl.value = st.llmBaseUrl || '';
+
+  const save = () => chrome.storage.local.set({
+    llmProvider: provider, llmKeys: keys, llmModels: models,
+    llmKey: keys[provider] || '', llmModel: models[provider] || '',
+    llmBaseUrl: baseEl.value.trim(),
+  });
+  const hint = (text, isErr = false) => {
+    hintEl.textContent = text;
+    hintEl.classList.toggle('err', isErr);
+  };
+  const defaultHint = () => hint(provider === 'custom'
+    ? 'Any OpenAI-compatible server, e.g. FreeLLMAPI at http://localhost:3001/v1. ↻ grants access to the host and loads its models.'
+    : 'Key and model are remembered per provider. ↻ loads every model your key can use.');
+
+  const render = () => {
+    const def = PROVIDERS[provider];
+    const current = models[provider] || '';
+    const live = (lists[provider]?.ids || []).filter(id => !def.models.includes(id));
+    const group = (label, ids) => {
+      if (!ids.length) return;
+      const g = document.createElement('optgroup');
+      g.label = label;
+      for (const id of ids) g.append(new Option(id, id));
+      modelSel.append(g);
+    };
+    providerEl.value = provider;
+    baseRow.hidden = provider !== 'custom';
+    modelSel.replaceChildren(new Option(`Default — ${def.defaultModel}`, ''));
+    group('Suggested', def.models);
+    if (lists[provider]) group(`From ${def.label} · loaded ${relativeTime(lists[provider].at)}`, live);
+    modelSel.append(new Option('Custom model ID…', MODEL_CUSTOM));
+    const known = current === '' || def.models.includes(current) || live.includes(current);
+    modelSel.value = known ? current : MODEL_CUSTOM;
+    customEl.hidden = known;
+    customEl.value = known ? '' : current;
+    keyEl.value = keys[provider] || '';
+    keyEl.placeholder = def.keyOptional ? 'Optional' : '';
+    defaultHint();
+  };
+
+  providerEl.addEventListener('change', async () => {
+    provider = providerEl.value;
+    render();
+    // Await the write — refreshBalance reads provider+key from storage.
+    await save();
+    refreshBalance({ force: true });
+  });
+  modelSel.addEventListener('change', () => {
+    const custom = modelSel.value === MODEL_CUSTOM;
+    customEl.hidden = !custom;
+    if (custom) customEl.focus();
+    models[provider] = custom ? customEl.value.trim() : modelSel.value;
+    save();
+  });
+  customEl.addEventListener('input', () => {
+    models[provider] = customEl.value.trim();
+    save();
+  });
+  keyEl.addEventListener('change', async () => {
+    keys[provider] = keyEl.value.trim();
+    await save();
+    refreshBalance({ force: true });
+  });
+  baseEl.addEventListener('change', () => save());
+
+  loadBtn.addEventListener('click', async () => {
+    const apiKey = keyEl.value.trim();
+    const baseUrl = baseEl.value.trim().replace(/\/+$/, '');
+    if (provider === 'custom') {
+      const origin = endpointOrigin(baseUrl);
+      if (!origin) { hint('Enter the base URL first, e.g. http://localhost:3001/v1', true); flagSettingsField('set-llm-base'); return; }
+      // Must be the first await — permissions.request needs the click's user gesture.
+      const granted = await chrome.permissions.request({ origins: [origin] }).catch(() => false);
+      if (!granted) { hint(`Access to ${new URL(baseUrl).host} was not granted.`, true); return; }
+    } else if (!apiKey && provider !== 'openrouter') {
+      hint(`Enter a ${PROVIDERS[provider].label} API key first.`, true);
+      flagSettingsField('set-llm-key');
+      return;
+    }
+    const forProvider = provider;
+    keys[provider] = apiKey;
+    loadBtn.disabled = true;
+    hint('Loading models…');
+    try {
+      const ids = await fetchModelList(forProvider, apiKey, baseUrl);
+      lists[forProvider] = { ids, at: Date.now() };
+      await chrome.storage.local.set({ llmModelLists: lists });
+      await save();
+      if (provider === forProvider) {
+        render();
+        hint(`Loaded ${ids.length} model${ids.length === 1 ? '' : 's'}.`);
+      }
+    } catch (e) {
+      if (provider === forProvider) hint(`Couldn't load models — ${e.message}`, true);
+    } finally {
+      loadBtn.disabled = false;
+    }
+  });
+
+  render();
+  if (!st.llmKeys) await save();
+}
+
+// Match pattern for a custom endpoint's host (any port), or '' if invalid.
+function endpointOrigin(baseUrl) {
+  try {
+    const u = new URL(baseUrl);
+    return /^https?:$/.test(u.protocol) ? `${u.protocol}//${u.hostname}/*` : '';
+  } catch { return ''; }
+}
+
+// GET the provider's model list. Only ever runs on the ↻ click.
+async function fetchModelList(providerKey, apiKey, customBaseUrl) {
+  const p = PROVIDERS[providerKey];
+  const baseUrl = providerKey === 'custom' ? customBaseUrl : p.baseUrl;
+  let url = `${baseUrl}/models`;
+  let headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+  if (p.family === 'anthropic') {
+    url = `${baseUrl}/v1/models?limit=1000`;
+    headers = { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
+  } else if (p.family === 'gemini') {
+    url = `${baseUrl}/models?pageSize=1000&key=${encodeURIComponent(apiKey)}`;
+    headers = {};
+  }
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`${res.status}${t ? ': ' + t.slice(0, 120) : ''}`);
+  }
+  const json = await res.json();
+  const ids = p.family === 'gemini'
+    ? (json.models || [])
+        .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+        .map(m => String(m.name || '').replace(/^models\//, ''))
+    // Mistral flags chat support explicitly; others don't, so undefined passes.
+    : (json.data || []).filter(m => m?.capabilities?.completion_chat !== false).map(m => m?.id);
+  const out = [...new Set(ids)].filter(id => id && !NON_CHAT_MODEL.test(id)).sort();
+  if (!out.length) throw new Error('the provider returned no chat models');
+  return out;
+}
 
 // UI zoom slider — −/+ buttons, range input, live % readout. Persists on
 // release ('change'); applies zoom + updates readout on every input event so
@@ -764,7 +937,7 @@ async function summarise() {
   // the user at the right input.
   settingsEl.open = false;
   const stored = await chrome.storage.local.get([
-    'llmProvider', 'llmModel', 'llmKey', 'extraPrompt',
+    'llmProvider', 'llmModel', 'llmKey', 'llmBaseUrl', 'extraPrompt',
     'summaryTemp', 'summaryMaxTokens', 'ytPrompt', 'pagePrompt',
   ]);
   const providerKey = stored.llmProvider || DEFAULT_PROVIDER;
@@ -779,7 +952,23 @@ async function summarise() {
   const maxNum = parseInt(stored.summaryMaxTokens, 10);
   const maxTokens = Number.isFinite(maxNum) ? maxNum : 600;
 
-  if (!apiKey) {
+  const baseUrl = providerKey === 'custom' ? (stored.llmBaseUrl || '').trim().replace(/\/+$/, '') : provider.baseUrl;
+  if (providerKey === 'custom') {
+    const origin = endpointOrigin(baseUrl);
+    if (!origin) {
+      setStatus('Set the custom endpoint base URL in Settings first.', 'err');
+      flagSettingsField('set-llm-base');
+      return;
+    }
+    // No prompt here: the gesture is gone after the storage read above.
+    if (!(await chrome.permissions.contains({ origins: [origin] }))) {
+      setStatus(`Click ↻ next to Model in Settings to allow access to ${new URL(baseUrl).host}.`, 'err');
+      flagSettingsField('load-models');
+      return;
+    }
+  }
+
+  if (!apiKey && !provider.keyOptional) {
     // Only name the provider if the user has explicitly picked one — otherwise
     // we'd be telling first-time users "add a DeepSeek key" when they may want
     // a different provider. `stored.llmProvider` is undefined when nothing's
@@ -863,6 +1052,7 @@ async function summarise() {
 
     for await (const chunk of streamLLM({
       providerKey,
+      baseUrl,
       model: (stored.llmModel || '').trim(),
       apiKey,
       system: systemContent,
@@ -938,9 +1128,10 @@ async function readPageText() {
 // streams: OpenAI-compatible (data lines + [DONE]), Anthropic
 // (content_block_delta events) and Gemini (?alt=sse mirrors the non-streaming
 // shape, one JSON object per event).
-async function* streamLLM({ providerKey, model, apiKey, system, user, temperature = 0.3, maxTokens = 600, onPhase = () => {} }) {
+async function* streamLLM({ providerKey, baseUrl, model, apiKey, system, user, temperature = 0.3, maxTokens = 600, onPhase = () => {} }) {
   const provider = PROVIDERS[providerKey] || PROVIDERS[DEFAULT_PROVIDER];
   const useModel = model || provider.defaultModel;
+  const base = baseUrl || provider.baseUrl;
 
   // One abort timer, re-armed as data arrives: 20 s for headers, then 30 s
   // between data events. Keep-alive comments don't re-arm it — DeepSeek sends
@@ -969,10 +1160,11 @@ async function* streamLLM({ providerKey, model, apiKey, system, user, temperatur
 
   try {
     if (provider.family === 'openai') {
-      // OpenAI-compatible chat completions — DeepSeek, OpenAI, OpenRouter, Groq.
-      const res = await fetch(`${provider.baseUrl}/chat/completions`, {
+      // OpenAI-compatible chat completions — DeepSeek, OpenAI, Mistral,
+      // OpenRouter, Groq, custom endpoints.
+      const res = await fetch(`${base}/chat/completions`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        headers: { ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: useModel,
           messages: [
@@ -1004,7 +1196,7 @@ async function* streamLLM({ providerKey, model, apiKey, system, user, temperatur
     if (provider.family === 'anthropic') {
       // Anthropic Messages API — separate `system` field, x-api-key auth, and
       // the dangerous-direct-browser-access opt-in for non-server callers.
-      const res = await fetch(`${provider.baseUrl}/v1/messages`, {
+      const res = await fetch(`${base}/v1/messages`, {
         method: 'POST',
         headers: {
           'x-api-key': apiKey,
@@ -1038,7 +1230,7 @@ async function* streamLLM({ providerKey, model, apiKey, system, user, temperatur
       // Gemini's streaming endpoint mirrors the non-streaming shape per chunk
       // when ?alt=sse is set. Without that flag it returns a JSON array — much
       // harder to parse incrementally.
-      const url = `${provider.baseUrl}/models/${encodeURIComponent(useModel)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
+      const url = `${base}/models/${encodeURIComponent(useModel)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
