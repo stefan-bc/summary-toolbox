@@ -1,6 +1,6 @@
 # Summary Toolbox — Privacy Policy
 
-_Last updated: 2026-05-06_
+_Last updated: 2026-09-14_
 
 Summary Toolbox is a Chrome extension that extracts YouTube transcripts and, optionally, summarises the active web page through an AI provider you supply your own API key for. This document explains exactly what data the extension touches and where it goes.
 
