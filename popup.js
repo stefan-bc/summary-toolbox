@@ -49,7 +49,7 @@ let lastSummary = '';
 // LLM provider catalogue. Three API families share three adapter functions
 // in callLLM; each provider just maps to a baseUrl + default model.
 const PROVIDERS = {
-  deepseek:   { label: 'DeepSeek',         baseUrl: 'https://api.deepseek.com',                          defaultModel: 'deepseek-v4-flash',            family: 'openai' },
+  deepseek:   { label: 'DeepSeek',         baseUrl: 'https://api.deepseek.com',                          defaultModel: 'deepseek-flash',               family: 'openai' },
   openai:     { label: 'OpenAI',           baseUrl: 'https://api.openai.com/v1',                         defaultModel: 'gpt-4o-mini',                  family: 'openai' },
   anthropic:  { label: 'Anthropic Claude', baseUrl: 'https://api.anthropic.com',                         defaultModel: 'claude-haiku-4-5-20251001',    family: 'anthropic' },
   openrouter: { label: 'OpenRouter',       baseUrl: 'https://openrouter.ai/api/v1',                      defaultModel: 'anthropic/claude-3.5-haiku',   family: 'openai' },
@@ -849,6 +849,7 @@ async function summarise() {
 
     let accumulated = '';
     let firstChunk = true;
+    let sawThinking = false;
     let renderQueued = false;
     const flushRender = () => {
       renderQueued = false;
@@ -868,6 +869,16 @@ async function summarise() {
       user: inputText,
       temperature,
       maxTokens,
+      // Without these the status sat on "Sending…" while the server was
+      // queueing (keep-alives) or the model was reasoning — read as a hang.
+      onPhase: (phase) => {
+        if (!firstChunk) return;
+        if (phase === 'queued') setStatus(`${provider.label} is busy — request queued…`, 'busy');
+        if (phase === 'thinking') {
+          sawThinking = true;
+          setStatus(`${provider.label} is thinking…`, 'busy');
+        }
+      },
     })) {
       accumulated += chunk;
       if (firstChunk) {
@@ -880,7 +891,11 @@ async function summarise() {
     // timer hadn't fired yet.
     renderSummary(accumulated);
 
-    if (!accumulated.trim()) throw new Error('Empty response');
+    if (!accumulated.trim()) {
+      throw new Error(sawThinking
+        ? 'model spent the whole token budget thinking — raise Max tokens in Settings.'
+        : 'Empty response');
+    }
     lastSummary = accumulated;
 
     setStatus(truncated ? 'Summary ready (input truncated).' : 'Summary ready.', 'ok');
@@ -923,15 +938,29 @@ async function readPageText() {
 // streams: OpenAI-compatible (data lines + [DONE]), Anthropic
 // (content_block_delta events) and Gemini (?alt=sse mirrors the non-streaming
 // shape, one JSON object per event).
-async function* streamLLM({ providerKey, model, apiKey, system, user, temperature = 0.3, maxTokens = 600 }) {
+async function* streamLLM({ providerKey, model, apiKey, system, user, temperature = 0.3, maxTokens = 600, onPhase = () => {} }) {
   const provider = PROVIDERS[providerKey] || PROVIDERS[DEFAULT_PROVIDER];
   const useModel = model || provider.defaultModel;
 
-  // Abort if the server hasn't started responding within 20 s. Cleared as soon
-  // as fetch() resolves (headers received) — the streaming phase after that is
-  // fast. Without this, a slow/unresponsive provider hangs the popup silently.
+  // One abort timer, re-armed as data arrives: 20 s for headers, then 30 s
+  // between data events. Keep-alive comments don't re-arm it — DeepSeek sends
+  // those for up to 10 min while a request is queued, which used to hang the
+  // popup indefinitely. `stage` picks the error message on abort.
   const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), 20_000);
+  let stage = 'connect';
+  let tid;
+  const arm = (ms) => { clearTimeout(tid); tid = setTimeout(() => controller.abort(), ms); };
+  arm(20_000);
+  let gotData = false;
+  const onEvent = (kind) => {
+    if (kind === 'keepalive') {
+      if (!gotData) { stage = 'queued'; onPhase('queued'); }
+      return;
+    }
+    gotData = true;
+    stage = 'stream';
+    arm(30_000);
+  };
 
   const fail = async (res) => {
     const t = await res.text().catch(() => '');
@@ -960,9 +989,15 @@ async function* streamLLM({ providerKey, model, apiKey, system, user, temperatur
         }),
         signal: controller.signal,
       });
-      clearTimeout(tid);
+      stage = 'stream';
+      arm(30_000);
       if (!res.ok) await fail(res);
-      yield* parseSSE(res.body, (data) => data?.choices?.[0]?.delta?.content || '');
+      yield* parseSSE(res.body, (data) => {
+        const delta = data?.choices?.[0]?.delta;
+        // DeepSeek uses reasoning_content, OpenRouter uses reasoning.
+        if (delta?.reasoning_content || delta?.reasoning) onPhase('thinking');
+        return delta?.content || '';
+      }, onEvent);
       return;
     }
 
@@ -986,14 +1021,16 @@ async function* streamLLM({ providerKey, model, apiKey, system, user, temperatur
         }),
         signal: controller.signal,
       });
-      clearTimeout(tid);
+      stage = 'stream';
+      arm(30_000);
       if (!res.ok) await fail(res);
       // Anthropic emits multiple event types; only content_block_delta carries
       // generated text. Other types (message_start, ping, message_delta) yield ''.
       yield* parseSSE(res.body, (data) => {
+        if (data?.delta?.type === 'thinking_delta') onPhase('thinking');
         if (data?.type === 'content_block_delta') return data?.delta?.text || '';
         return '';
-      });
+      }, onEvent);
       return;
     }
 
@@ -1012,18 +1049,23 @@ async function* streamLLM({ providerKey, model, apiKey, system, user, temperatur
         }),
         signal: controller.signal,
       });
-      clearTimeout(tid);
+      stage = 'stream';
+      arm(30_000);
       if (!res.ok) await fail(res);
       yield* parseSSE(res.body, (data) => {
         const parts = data?.candidates?.[0]?.content?.parts || [];
         return parts.map(p => p?.text || '').join('');
-      });
+      }, onEvent);
       return;
     }
 
     throw new Error(`Unknown provider family: ${provider.family}`);
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error(`${provider.label} didn't respond within 20 s — try again.`);
+    if (e.name === 'AbortError') {
+      if (stage === 'queued') throw new Error(`${provider.label} is overloaded — request still queued after 30 s. Try again.`);
+      if (stage === 'stream') throw new Error(`${provider.label} stopped sending data for 30 s — try again.`);
+      throw new Error(`${provider.label} didn't respond within 20 s — try again.`);
+    }
     throw e;
   } finally {
     clearTimeout(tid);
@@ -1035,7 +1077,7 @@ async function* streamLLM({ providerKey, model, apiKey, system, user, temperatur
 // is metadata our extractors don't need). Each data payload is JSON-parsed
 // and handed to the provider-specific extractor, which returns the text
 // fragment to yield (or '' to skip).
-async function* parseSSE(body, extractText) {
+async function* parseSSE(body, extractText, onEvent = () => {}) {
   if (!body) throw new Error('Stream has no body');
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -1048,7 +1090,9 @@ async function* parseSSE(body, extractText) {
     while ((nl = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, nl).trimEnd();
       buffer = buffer.slice(nl + 1);
-      if (!line || !line.startsWith('data:')) continue;
+      if (line.startsWith(':')) { onEvent('keepalive'); continue; }
+      if (!line.startsWith('data:')) continue;
+      onEvent('data');
       const payload = line.slice(5).trim();
       if (payload === '[DONE]') return;
       try {
