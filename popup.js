@@ -1406,7 +1406,12 @@ function appendBulletWithStamps(li, text) {
     lastIdx = m.index + m[0].length;
   }
   if (lastIdx < text.length) {
-    li.appendChild(document.createTextNode(text.slice(lastIdx)));
+    const tail = text.slice(lastIdx);
+    // The model usually closes the sentence after the bracket ("… alternatives
+    // [0:00–0:15]."). The chip is an inline-block with its own padding, so that
+    // lone full stop renders detached a few pixels to the right. Drop it when
+    // nothing but punctuation follows the final stamp.
+    if (!/^[\s.,;:!?]+$/.test(tail)) li.appendChild(document.createTextNode(tail));
   }
 }
 
