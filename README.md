@@ -10,7 +10,7 @@ Chrome extension for grabbing YouTube video transcripts — searchable preview, 
 - **Include timestamps** toggle — prefix copied/downloaded text with `[mm:ss]`.
 - **Strip non-speech markers** toggle — removes `[Music]`, `[Applause]`, etc.
 - **Copy** to clipboard, or **download** as TXT or SRT.
-- **AI summary (BYOK)** — generate a 5–7 bullet summary of a YouTube transcript *or* the active web page, via DeepSeek, OpenAI, Anthropic Claude, Mistral, OpenRouter, Groq, or Google Gemini. Then **Copy**, **Save to Obsidian**, or **Save to Notion**.
+- **AI summary (BYOK)** — generate a 5–7 bullet summary of a YouTube transcript *or* the active web page, via DeepSeek, OpenAI, Anthropic Claude, Mistral, OpenRouter, Groq, Google Gemini, or your own OpenAI-compatible server (e.g. FreeLLMAPI). Then **Copy**, **Save to Obsidian**, or **Save to Notion**.
 - **Auto** tick — opt-in (off by default). When set, opening the popup runs Summarise straight away instead of waiting for a click. Skipped if a cached summary is already showing, or if no API key is set.
 - **Dark mode** — follows the OS preference automatically.
 - Preferences and API credentials persist between opens (locally, never synced).
@@ -52,14 +52,15 @@ Reassign the shortcut at `chrome://extensions/shortcuts` if it clashes with some
 
 ## Summary + save (optional)
 
-The **Summarise** button is opt-in and requires a BYOK (bring-your-own-key) for one of seven LLM providers. Output is 5–7 bullet points covering the main topics. The "Custom instruction" input adds priorities the model should weight (e.g. *"key takeaways for beginners"*); pressing Enter triggers Summarise. The lock at its right edge decides how long the instruction lasts: unlocked (default) clears it when you open the popup on a different video or page, locked keeps it for every one.
+The **Summarise** button is opt-in and requires a BYOK (bring-your-own-key) for one of seven LLM providers, or a self-hosted OpenAI-compatible endpoint. Output is 5–7 bullet points covering the main topics. The "Custom instruction" input adds priorities the model should weight (e.g. *"key takeaways for beginners"*); pressing Enter triggers Summarise. The lock at its right edge decides how long the instruction lasts: unlocked (default) clears it when you open the popup on a different video or page, locked keeps it for every one.
 
 ### Setup
 
 Open the **Settings** panel at the bottom of the popup and fill in only what you need:
 
 #### AI provider
-- **Provider** — DeepSeek, OpenAI, Anthropic Claude, Mistral, OpenRouter, Groq, or Google Gemini.
+- **Provider** — DeepSeek, OpenAI, Anthropic Claude, Mistral, OpenRouter, Groq, Google Gemini, or **Custom endpoint (OpenAI-compatible)**.
+- **Base URL** (Custom endpoint only) — e.g. `http://localhost:3001/v1`. The extension holds no permission for this host, so the server must allow the extension's origin via CORS; the Settings hint shows the exact `chrome-extension://…` origin. For FreeLLMAPI, add it to `DASHBOARD_ORIGINS`.
 - **API key** — from your provider's dashboard.
 - **Model** — Default, a short suggested list, or **Custom model ID…**. **↻** loads the full list of chat models your key can use from the provider.
 
@@ -82,7 +83,7 @@ Transcripts and page text are read directly from the active tab via `chrome.scri
 
 Network requests fire only on your action — a button click, or opening the popup with the opt-in **Auto** tick switched on — and only to the host of your **configured provider**:
 
-- **Summarise** → `POST` to one of `api.deepseek.com`, `api.openai.com`, `api.anthropic.com`, `api.mistral.ai`, `openrouter.ai`, `api.groq.com`, or `generativelanguage.googleapis.com` (whichever you picked) with the transcript or page text.
+- **Summarise** → `POST` to one of `api.deepseek.com`, `api.openai.com`, `api.anthropic.com`, `api.mistral.ai`, `openrouter.ai`, `api.groq.com`, or `generativelanguage.googleapis.com` (whichever you picked) with the transcript or page text — or, with **Custom endpoint**, to the base URL you entered.
 - **↻ (load models)** → `GET` the configured provider's model list, only when you click it.
 - **Save to Notion** → `PATCH https://api.notion.com/v1/blocks/<page>/children` with the summary content.
 - **Save to Obsidian** → uses the local `obsidian://` URL scheme; never hits the network.

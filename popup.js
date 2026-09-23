@@ -67,8 +67,26 @@ const PROVIDERS = {
                 models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b'] },
   gemini:     { label: 'Google Gemini',    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',  defaultModel: 'gemini-2.5-flash-lite',        family: 'gemini',
                 models: ['gemini-2.5-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-pro'] },
+  // User-hosted OpenAI-compatible server (FreeLLMAPI, LiteLLM, Ollama, …).
+  // baseUrl comes from Settings. No host permission is held for it: the server
+  // must allow this extension's origin via CORS, or the fetch is blocked.
+  custom:     { label: 'Custom endpoint',  baseUrl: '',                                                  defaultModel: 'auto',                         family: 'openai',
+                models: ['auto'], keyOptional: true },
 };
 const DEFAULT_PROVIDER = 'deepseek';
+const EXTENSION_ORIGIN = `chrome-extension://${chrome.runtime.id}`;
+
+// Validated custom base URL without trailing slashes, or '' if unusable.
+function customBaseUrl(raw) {
+  const s = (raw || '').trim().replace(/\/+$/, '');
+  try { return /^https?:$/.test(new URL(s).protocol) ? s : ''; } catch { return ''; }
+}
+
+// fetch() throws a bare TypeError when CORS blocks it or the host is down —
+// the two cases look identical from here, so name both.
+function unreachableMessage(baseUrl) {
+  return `Couldn't reach ${new URL(baseUrl).host}. Check it's running and allows the origin ${EXTENSION_ORIGIN} (CORS; FreeLLMAPI: DASHBOARD_ORIGINS).`;
+}
 
 // Settings field IDs ↔ storage keys. Bound on load so each change persists.
 const SETTING_FIELDS = [
@@ -202,6 +220,8 @@ const NON_CHAT_MODEL = /embed|whisper|tts|dall-e|image|audio|realtime|moderation
 
 async function initModelPicker() {
   const providerEl = document.getElementById('set-provider');
+  const baseRow = document.getElementById('base-url-row');
+  const baseEl = document.getElementById('set-llm-base');
   const modelSel = document.getElementById('set-llm-model');
   const customEl = document.getElementById('set-llm-model-custom');
   const keyEl = document.getElementById('set-llm-key');
@@ -209,7 +229,7 @@ async function initModelPicker() {
   const hintEl = document.getElementById('model-hint');
 
   const st = await chrome.storage.local.get([
-    'llmProvider', 'llmKey', 'llmModel', 'llmKeys', 'llmModels', 'llmModelLists',
+    'llmProvider', 'llmKey', 'llmModel', 'llmKeys', 'llmModels', 'llmModelLists', 'llmBaseUrl',
   ]);
   let provider = PROVIDERS[st.llmProvider] ? st.llmProvider : DEFAULT_PROVIDER;
   const keys = st.llmKeys || {};
@@ -220,16 +240,20 @@ async function initModelPicker() {
     if (st.llmKey) keys[provider] = st.llmKey;
     if (st.llmModel) models[provider] = st.llmModel;
   }
+  baseEl.value = st.llmBaseUrl || '';
 
   const save = () => chrome.storage.local.set({
     llmProvider: provider, llmKeys: keys, llmModels: models,
     llmKey: keys[provider] || '', llmModel: models[provider] || '',
+    llmBaseUrl: baseEl.value.trim(),
   });
   const hint = (text, isErr = false) => {
     hintEl.textContent = text;
     hintEl.classList.toggle('err', isErr);
   };
-  const defaultHint = () => hint('Key and model are remembered per provider. ↻ loads every model your key can use.');
+  const defaultHint = () => hint(provider === 'custom'
+    ? `Any OpenAI-compatible server, e.g. FreeLLMAPI. It must allow the origin ${EXTENSION_ORIGIN} (CORS). Key is optional if the server doesn't need one.`
+    : 'Key and model are remembered per provider. ↻ loads every model your key can use.');
 
   const render = () => {
     const def = PROVIDERS[provider];
@@ -243,6 +267,7 @@ async function initModelPicker() {
       modelSel.append(g);
     };
     providerEl.value = provider;
+    baseRow.hidden = provider !== 'custom';
     modelSel.replaceChildren(new Option(`Default — ${def.defaultModel}`, ''));
     group('Suggested', def.models);
     if (lists[provider]) group(`From ${def.label} · loaded ${relativeTime(lists[provider].at)}`, live);
@@ -252,6 +277,7 @@ async function initModelPicker() {
     customEl.hidden = known;
     customEl.value = known ? '' : current;
     keyEl.value = keys[provider] || '';
+    keyEl.placeholder = def.keyOptional ? 'Optional' : '';
     defaultHint();
   };
 
@@ -278,11 +304,15 @@ async function initModelPicker() {
     await save();
     refreshBalance({ force: true });
   });
+  baseEl.addEventListener('change', () => save());
 
   loadBtn.addEventListener('click', async () => {
     const apiKey = keyEl.value.trim();
-    // OpenRouter's model list is public; everyone else needs the key.
-    if (!apiKey && provider !== 'openrouter') {
+    const baseUrl = customBaseUrl(baseEl.value);
+    if (provider === 'custom') {
+      if (!baseUrl) { hint('Enter the base URL first, e.g. http://localhost:3001/v1', true); flagSettingsField('set-llm-base'); return; }
+    } else if (!apiKey && provider !== 'openrouter') {
+      // OpenRouter's model list is public; everyone else needs the key.
       hint(`Enter a ${PROVIDERS[provider].label} API key first.`, true);
       flagSettingsField('set-llm-key');
       return;
@@ -292,7 +322,7 @@ async function initModelPicker() {
     loadBtn.disabled = true;
     hint('Loading models…');
     try {
-      const ids = await fetchModelList(forProvider, apiKey);
+      const ids = await fetchModelList(forProvider, apiKey, baseUrl);
       lists[forProvider] = { ids, at: Date.now() };
       await chrome.storage.local.set({ llmModelLists: lists });
       await save();
@@ -301,7 +331,8 @@ async function initModelPicker() {
         hint(`Loaded ${ids.length} model${ids.length === 1 ? '' : 's'}.`);
       }
     } catch (e) {
-      if (provider === forProvider) hint(`Couldn't load models — ${e.message}`, true);
+      const msg = forProvider === 'custom' && e instanceof TypeError ? unreachableMessage(baseUrl) : `Couldn't load models — ${e.message}`;
+      if (provider === forProvider) hint(msg, true);
     } finally {
       loadBtn.disabled = false;
     }
@@ -314,9 +345,9 @@ async function initModelPicker() {
 }
 
 // GET the provider's model list. Only ever runs on the ↻ click.
-async function fetchModelList(providerKey, apiKey) {
+async function fetchModelList(providerKey, apiKey, customBase) {
   const p = PROVIDERS[providerKey];
-  const baseUrl = p.baseUrl;
+  const baseUrl = providerKey === 'custom' ? customBase : p.baseUrl;
   let url = `${baseUrl}/models`;
   let headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
   if (p.family === 'anthropic') {
@@ -949,7 +980,7 @@ async function summarise() {
   settingsEl.open = false;
   await extraPromptReady;
   const stored = await chrome.storage.local.get([
-    'llmProvider', 'llmModel', 'llmKey',
+    'llmProvider', 'llmModel', 'llmKey', 'llmBaseUrl',
     'summaryTemp', 'summaryMaxTokens', 'ytPrompt', 'pagePrompt',
   ]);
   const providerKey = stored.llmProvider || DEFAULT_PROVIDER;
@@ -964,7 +995,14 @@ async function summarise() {
   const maxNum = parseInt(stored.summaryMaxTokens, 10);
   const maxTokens = Number.isFinite(maxNum) ? maxNum : 600;
 
-  if (!apiKey) {
+  const baseUrl = providerKey === 'custom' ? customBaseUrl(stored.llmBaseUrl) : provider.baseUrl;
+  if (!baseUrl) {
+    setStatus('Set the custom endpoint base URL in Settings first.', 'err');
+    flagSettingsField('set-llm-base');
+    return;
+  }
+
+  if (!apiKey && !provider.keyOptional) {
     // Only name the provider if the user has explicitly picked one — otherwise
     // we'd be telling first-time users "add a DeepSeek key" when they may want
     // a different provider. `stored.llmProvider` is undefined when nothing's
@@ -1048,6 +1086,7 @@ async function summarise() {
 
     for await (const chunk of streamLLM({
       providerKey,
+      baseUrl,
       model: (stored.llmModel || '').trim(),
       apiKey,
       system: systemContent,
@@ -1090,7 +1129,8 @@ async function summarise() {
     // sees the cost they incurred. No-op for other providers.
     refreshBalance({ force: true });
   } catch (e) {
-    setStatus(`Summary failed: ${e.message}`, 'err');
+    const msg = providerKey === 'custom' && e instanceof TypeError ? unreachableMessage(baseUrl) : e.message;
+    setStatus(`Summary failed: ${msg}`, 'err');
   } finally {
     summarizeBtn.disabled = false;
     summarizeBtn.textContent = origLabel;
@@ -1123,9 +1163,10 @@ async function readPageText() {
 // streams: OpenAI-compatible (data lines + [DONE]), Anthropic
 // (content_block_delta events) and Gemini (?alt=sse mirrors the non-streaming
 // shape, one JSON object per event).
-async function* streamLLM({ providerKey, model, apiKey, system, user, temperature = 0.3, maxTokens = 600, onPhase = () => {} }) {
+async function* streamLLM({ providerKey, baseUrl, model, apiKey, system, user, temperature = 0.3, maxTokens = 600, onPhase = () => {} }) {
   const provider = PROVIDERS[providerKey] || PROVIDERS[DEFAULT_PROVIDER];
   const useModel = model || provider.defaultModel;
+  const base = baseUrl || provider.baseUrl;
 
   // One abort timer, re-armed as data arrives: 20 s for headers, then 30 s
   // between data events. Keep-alive comments don't re-arm it — DeepSeek sends
@@ -1154,10 +1195,11 @@ async function* streamLLM({ providerKey, model, apiKey, system, user, temperatur
 
   try {
     if (provider.family === 'openai') {
-      // OpenAI-compatible chat completions — DeepSeek, OpenAI, Mistral, OpenRouter, Groq.
-      const res = await fetch(`${provider.baseUrl}/chat/completions`, {
+      // OpenAI-compatible chat completions — DeepSeek, OpenAI, Mistral,
+      // OpenRouter, Groq, custom endpoints.
+      const res = await fetch(`${base}/chat/completions`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        headers: { ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: useModel,
           messages: [

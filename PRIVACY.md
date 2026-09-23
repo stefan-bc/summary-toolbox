@@ -1,6 +1,6 @@
 # Summary Toolbox — Privacy Policy
 
-_Last updated: 2026-09-14_
+_Last updated: 2026-09-24_
 
 Summary Toolbox is a Chrome extension that extracts YouTube transcripts and, optionally, summarises the active web page through an AI provider you supply your own API key for. This document explains exactly what data the extension touches and where it goes.
 
@@ -26,10 +26,11 @@ Summary Toolbox only makes network requests on **your action** — a button clic
 | Summarise (OpenRouter) | `openrouter.ai` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
 | Summarise (Groq) | `api.groq.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
 | Summarise (Gemini) | `generativelanguage.googleapis.com` | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
+| Summarise (Custom endpoint) | The base URL you enter in Settings | Transcript or page text + your prompt | You click Summarise, or open the popup with **Auto** on |
 | Save to Notion | `api.notion.com` | The summary text + the source URL | You click Save to Notion |
 | Save to Obsidian | _Local `obsidian://` URL scheme_ | Summary text | You click Save to Obsidian — never hits the network |
 
-Only one provider host is contacted per Summarise — whichever you configured.
+Only one provider host is contacted per Summarise — whichever you configured. With **Custom endpoint**, that is a server you chose (typically one you run yourself); what it does with the text is governed by that server, not by Summary Toolbox. The extension holds no permission for it — the request succeeds only if that server explicitly allows the extension via CORS.
 
 ### Auto-summarise (opt-in, off by default)
 

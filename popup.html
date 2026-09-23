@@ -889,7 +889,12 @@
             <option value="openrouter">OpenRouter</option>
             <option value="groq">Groq</option>
             <option value="gemini">Google Gemini</option>
+            <option value="custom">Custom endpoint (OpenAI-compatible)</option>
           </select>
+        </label>
+        <label id="base-url-row" hidden>
+          <span>Base URL</span>
+          <input type="url" id="set-llm-base" placeholder="http://localhost:3001/v1" autocomplete="off" spellcheck="false">
         </label>
         <label>
           <span>API key</span>
